@@ -5,37 +5,64 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>NCPTrans</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
     --bg:#f8ece3;
     --panel-bg:rgba(249,236,227,0.95);
     --panel-border:#5b300029;
     --text:#1e2d33;
-    --text-dim:60768;
+    --text-dim:#8a7568;
     --accent:#D5674C;
     --accent-2:#D5674C;
     --danger:#f87171;
-    --mono:'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    /* Bewust GEEN extern webfont (zoals Google Fonts): dat vereist twee
+       netwerkaanvragen die niet overal even betrouwbaar/uniform laden,
+       wat eerder tot inconsistente lettertypen tussen elementen leidde.
+       Deze systeem-monospace-stack is altijd en overal direct beschikbaar,
+       identiek voor alle elementen, zonder laadrace. */
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
     --radius:12px;
   }
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--text);
     font-family:var(--mono);overflow:hidden;-webkit-tap-highlight-color:transparent;}
+  /* Formuliervelden erven het body-lettertype niet altijd automatisch over
+     (browser-standaardstijl); expliciet forceren zodat alles consistent
+     hetzelfde lettertype gebruikt. */
+  button, input, select, textarea{font-family:var(--mono);}
+
+  /* --- nette, dunne scrollbars i.p.v. de standaard browserbalken --- */
+  html{scrollbar-width:thin;scrollbar-color:var(--accent) transparent;}
+  *::-webkit-scrollbar{width:8px;height:8px;}
+  *::-webkit-scrollbar-track{background:transparent;}
+  *::-webkit-scrollbar-thumb{background:rgba(213,103,76,0.45);border-radius:8px;}
+  *::-webkit-scrollbar-thumb:hover{background:rgba(213,103,76,0.75);}
+
   #map{position:fixed;inset:0;z-index:0;background:#0a0f1a;}
   .leaflet-container{background:#0a0f1a;font-family:var(--mono);}
 
-  /* --- schietroos + separatie-badge, vast in het midden van de kaart --- */
-  #crosshair{
+  /* --- schietroos: eigen, onafhankelijk gepositioneerd element -----
+     Dit staat los van de separatie-badge (zie #sep-badge-wrap), zodat
+     de breedte van de badge-tekst het middelpunt van het kruis nooit
+     meer kan verschuiven. Positie (left/top in px) wordt door JS gezet
+     (zie positionCrosshair()); de transform hieronder zorgt er alleen
+     voor dat dát punt precies het midden van het kruis is. */
+  #crosshair-center{
     position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
-    z-index:15;pointer-events:none;display:flex;align-items:center;gap:8px;
+    z-index:15;pointer-events:none;
   }
-  #crosshair svg{filter:drop-shadow(0 1px 3px rgba(0,0,0,0.7));}
+  #crosshair-center svg{filter:drop-shadow(0 1px 3px rgba(0,0,0,0.5));}
+  @keyframes ncp-spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
+  #crosshair-center.loading svg{animation:ncp-spin 0.9s linear infinite;transform-origin:22px 22px;}
+
+  #sep-badge-wrap{
+    position:fixed;top:50%;left:50%;transform:translate(0,-50%);
+    z-index:15;pointer-events:none;
+  }
   #sep-badge{
     background:#fff;border:1px solid var(--accent-2);color:var(--accent-2);
     font-family:var(--mono);font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;
-    white-space:nowrap;letter-spacing:0.02em;
+    white-space:nowrap;letter-spacing:0.02em;display:inline-block;
   }
   #sep-badge.hidden{display:none;}
 
@@ -57,6 +84,9 @@
   .brand{display:flex;align-items:center;gap:8px;}
   .brand-mark{color:var(--accent);font-size:18px;line-height:1;}
   .brand-title{font-weight:700;letter-spacing:0.08em;font-size:15px;}
+  .header-layers{display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--panel-border);
+    padding:8px 0;margin:2px 0;}
+  .header-layers .field-label{margin-bottom:2px;}
   #header-tab{
     position:fixed;top:12px;left:0;z-index:25;display:none;
     width:28px;height:64px;align-items:center;justify-content:center;
@@ -65,12 +95,12 @@
     box-shadow:0 4px 16px rgba(0,0,0,0.35);
   }
   #header-tab.visible{display:flex;}
-  #header-tab:hover{color:#fff;border-color:var(--accent);}
+  #header-tab:hover{color:var(--accent-2);border-color:var(--accent);}
 
   .icon-btn{
     background:transparent;border:1px solid var(--panel-border);color:var(--text-dim);
     border-radius:8px;width:30px;height:30px;display:flex;align-items:center;justify-content:center;
-    cursor:pointer;font-family:var(--mono);font-size:14px;
+    cursor:pointer;font-family:var(--mono);font-size:14px;flex-shrink:0;
   }
   .icon-btn:hover{color:var(--accent);border-color:var(--accent);}
 
@@ -95,47 +125,202 @@
   }
   .field{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0;}
   .field-label{font-size:10px;letter-spacing:0.08em;color:var(--text-dim);text-transform:uppercase;}
-  select, input[type=number]{
+  select, input[type=text]{
     font-family:var(--mono);background:#fff8f3;border:1px solid var(--panel-border);color:var(--text);
-    border-radius:8px;padding:7px 8px;font-size:13px;width:100%;
+    border-radius:8px;padding:7px 8px;font-size:13px;width:100%;line-height:1.3;
   }
-  select:focus, input[type=number]:focus{outline:none;border-color:var(--accent);}
+  select:focus, input[type=text]:focus{outline:none;border-color:var(--accent);}
   .row{display:flex;gap:8px;align-items:flex-end;width:100%;}
   #sheet-toggle{display:none;}
+  #sheet-toggle .chevron{
+    display:inline-block;font-size:11px;color:var(--accent);
+    transition:transform .15s ease;transform:rotate(0deg);
+  }
+  #sheet-toggle.expanded .chevron{transform:rotate(90deg);}
+
+  /* --- stepper-pijltjes naast numerieke tekstvelden (i.p.v. de browser-
+     eigen number-spinner, die op sommige locales een komma laat zien) --- */
+  .numeric-field{position:relative;width:100%;}
+  .numeric-field input{padding-right:22px;}
+  .stepper{position:absolute;right:2px;top:2px;bottom:2px;width:18px;
+    display:flex;flex-direction:column;}
+  .stepper-btn{flex:1;border:none;background:transparent;color:var(--text-dim);
+    cursor:pointer;font-size:8px;display:flex;align-items:center;justify-content:center;
+    padding:0;line-height:1;font-family:var(--mono);}
+  .stepper-btn:hover{color:var(--accent);}
+  .height-input-wrap .stepper{width:16px;}
 
   /* --- uitvoerpaneel --- */
   #output-panel{
     display:flex;flex-direction:column;gap:4px;
   }
-  #output-panel h2{
-    margin:0 0 2px 0;font-size:13px;letter-spacing:0.1em;color:var(--text);
-  }
+  /* #output-content bevat nu alle eigenlijke inhoud (de knop zelf staat
+     ernaast in #output-panel); zonder deze regel verdwijnt de tussenruimte
+     tussen bv. Historie en Debug info, want gap:4px hierboven werkt alleen
+     tussen de DIRECTE kinderen van #output-panel. */
+  #output-content{display:flex;flex-direction:column;gap:4px;}
   #output-panel h3{
     margin:10px 0 2px 0;font-size:10px;letter-spacing:0.1em;color:var(--accent);
     text-transform:uppercase;border-bottom:1px solid var(--panel-border);padding-bottom:3px;
   }
   #output-panel h3 small{color:var(--text-dim);font-weight:400;letter-spacing:0;text-transform:none;}
   .kv{display:grid;grid-template-columns:1fr auto;gap:2px 8px;}
-  .kv span:nth-child(odd){font-size:11px;color:var(--text-dim);align-self:center;}
+  .kv-label{font-size:11px;color:var(--text-dim);align-self:center;}
   .val{font-size:13px;font-weight:600;text-align:right;}
+  .kv-divider{grid-column:1 / -1;border-top:1px dashed var(--panel-border);margin:5px 0;}
 
   .height-row{display:flex;align-items:center;gap:8px;padding:3px 0;}
   .radio{width:14px;color:var(--text-dim);cursor:pointer;user-select:none;}
   .height-label{flex:1;font-size:12px;color:var(--text-dim);cursor:pointer;}
-  .height-input{
-    width:96px;text-align:right;font-family:var(--mono);font-size:13px;
+  .height-input-wrap{width:96px;flex:0 0 96px;position:relative;}
+  input.height-input{
+    width:100%;text-align:right;padding-right:18px;
+    font-family:var(--mono);font-size:13px;
     background:transparent;border:1px solid transparent;border-radius:6px;
-    padding:3px 6px;color:var(--text-dim);
-	max-width:10em; !important
+    padding-top:3px;padding-bottom:3px;padding-left:6px;color:var(--text-dim);
   }
   .height-row.active .radio{color:var(--accent-2);}
   .height-row.active .height-label{color:var(--text);}
-  .height-row.active .height-input{
-    border-color:var(--accent-2);color:var(--text);background:rgba(251,191,36,0.08);
+  .height-row.active input.height-input{
+    border-color:var(--accent-2);color:var(--text);background:rgba(213,103,76,0.10);
   }
-  .height-input[readonly]{pointer-events:none;}
+  /* GEEN pointer-events:none hier: readonly voorkomt al bewerken, maar laat
+     de waarde nog wel selecteren/kopiëren (dat blokkeerde pointer-events wel). */
+  .height-row:not(.active) .stepper{display:none;}
 
   #output-panel .divider{border-top:1px solid var(--panel-border);margin:10px 0 4px 0;}
+
+  .layer-toggle{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-dim);
+    cursor:pointer;padding:3px 0;user-select:none;}
+  .layer-toggle input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px;cursor:pointer;flex-shrink:0;}
+  .layer-toggle:has(input:checked){color:var(--text);}
+
+  .layer-controls{display:flex;flex-direction:column;gap:4px;}
+  .sub-controls{display:flex;flex-direction:column;gap:4px;padding:2px 0 6px 20px;}
+  .control-divider{border-top:1px solid var(--panel-border);margin:4px 0 6px 0;}
+  .layer-controls input[type=range]{width:100%;accent-color:var(--accent);height:16px;cursor:pointer;}
+  .layer-controls .slider-value{font-size:10px;color:var(--text-dim);text-align:right;}
+
+  /* --- eigen tick-marks onder de contourslider (native <datalist>-ticks
+     worden niet overal getekend, dus bouwen we ze zelf) --- */
+  .tick-row{display:flex;justify-content:space-between;padding:0 7px;margin-top:-6px;}
+  .tick-row .tick{width:2px;height:5px;background:var(--text-dim);border-radius:1px;opacity:0.6;}
+  .tick-row .tick.disabled{background:var(--panel-border);opacity:0.4;}
+
+  /* Zelfde duimbreedte (14px) als de dual-slider hieronder, bewust EXPLICIET
+     opnieuw gestyled i.p.v. op accent-color/browserstandaard te vertrouwen -
+     anders klopt de 7px-padding van .tick-row (= halve duimbreedte) niet meer
+     met de werkelijke positie van de duim op elke stap. */
+  #contour-interval-slider{
+    -webkit-appearance:none;appearance:none;width:100%;height:16px;
+    background:transparent;cursor:pointer;
+  }
+  #contour-interval-slider::-webkit-slider-runnable-track{
+    background:var(--panel-border);height:4px;border-radius:2px;
+  }
+  #contour-interval-slider::-webkit-slider-thumb{
+    -webkit-appearance:none;appearance:none;margin-top:-5px;
+    width:14px;height:14px;border-radius:50%;background:var(--accent);
+    border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.35);cursor:pointer;
+  }
+  #contour-interval-slider::-moz-range-track{background:var(--panel-border);height:4px;border-radius:2px;border:none;}
+  #contour-interval-slider::-moz-range-thumb{
+    width:14px;height:14px;border-radius:50%;background:var(--accent);
+    border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.35);cursor:pointer;
+  }
+
+  /* --- dual-handle slider (kleurschaal min/max in één balk) --- */
+  .dual-slider{position:relative;height:22px;margin:2px 0;}
+  .dual-slider-track{
+    position:absolute;top:50%;left:0;right:0;height:4px;transform:translateY(-50%);
+    background:var(--panel-border);border-radius:2px;
+  }
+  .dual-slider-fill{
+    position:absolute;top:50%;height:4px;transform:translateY(-50%);
+    background:var(--accent);border-radius:2px;
+  }
+  .dual-range{
+    position:absolute;top:0;left:0;width:100%;height:22px;margin:0;
+    background:none;pointer-events:none;-webkit-appearance:none;appearance:none;
+  }
+  .dual-range::-webkit-slider-runnable-track{background:none;height:22px;}
+  .dual-range::-webkit-slider-thumb{
+    pointer-events:auto;-webkit-appearance:none;appearance:none;margin-top:0;
+    width:14px;height:14px;border-radius:50%;background:var(--accent);
+    border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.35);cursor:pointer;
+  }
+  .dual-range::-moz-range-track{background:none;height:22px;border:none;}
+  .dual-range::-moz-range-thumb{
+    pointer-events:auto;width:14px;height:14px;border-radius:50%;background:var(--accent);
+    border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.35);cursor:pointer;
+  }
+  #color-min-slider{z-index:2;}
+  #color-max-slider{z-index:1;}
+
+  /* --- uitklapbaar "Weergave-instellingen"-blok, met duidelijke rand/kop --- */
+  .layer-details{margin-top:8px;border:1px solid var(--panel-border);border-radius:8px;overflow:hidden;}
+  .layer-details summary{
+    font-size:11px;font-weight:700;letter-spacing:0.04em;color:var(--text);cursor:pointer;
+    list-style:none;padding:7px 9px;user-select:none;
+    display:flex;align-items:center;gap:6px;background:rgba(213,103,76,0.10);
+  }
+  .layer-details summary::-webkit-details-marker{display:none;}
+  .layer-details summary::before{
+    content:'\25B8';color:var(--accent);font-size:11px;display:inline-block;
+    transition:transform .15s ease;
+  }
+  .layer-details[open] summary::before{transform:rotate(90deg);}
+  .layer-details .layer-controls{padding:8px 9px 9px 9px;}
+  .layer-details .layer-toggle{padding:3px 0 7px 0;border-bottom:1px solid var(--panel-border);margin-bottom:4px;}
+
+  .val.dim{color:var(--text-dim);font-weight:500;opacity:0.6;}
+  .val.oob{color:var(--danger);}
+
+  .oob-badge{
+    display:inline-flex;align-items:center;justify-content:center;
+    width:16px;height:16px;border-radius:50%;background:var(--danger);color:#fff;
+    font-size:11px;font-weight:700;margin-left:5px;cursor:help;vertical-align:middle;
+    border:1px solid #fff;box-shadow:0 0 0 1px var(--danger);
+  }
+  .oob-badge.hidden{display:none;}
+
+  .info-badge{
+    display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;
+    width:11px;height:11px;border-radius:50%;background:var(--accent);color:#fff;
+    font-size:8px;font-weight:700;margin-left:3px;cursor:help;vertical-align:middle;
+  }
+
+  .mixup-arrow{
+    display:inline-block;margin-right:4px;color:var(--accent);font-weight:700;
+    transform-origin:50% 55%;
+  }
+
+  .contour-label{
+    background:rgba(249,236,227,0.85);border:1px solid rgba(43,43,43,0.4);border-radius:3px;
+    font-family:var(--mono);font-size:9px;font-weight:600;color:#2b2b2b;
+    text-align:center;padding:0 3px;white-space:nowrap;
+  }
+
+  .history-row{display:flex;align-items:center;gap:8px;}
+
+  /* --- historietabel --- */
+  #history-table{width:100%;border-collapse:collapse;font-size:11px;}
+  #history-table th,#history-table td{padding:4px 8px;text-align:right;border-bottom:1px solid var(--panel-border);white-space:nowrap;}
+  #history-table th{color:var(--text-dim);font-weight:600;text-transform:uppercase;font-size:10px;}
+  #history-table td:first-child,#history-table th:first-child{text-align:left;}
+  #history-table-wrap{overflow-x:auto;max-height:55vh;overflow-y:auto;}
+  .leaflet-tooltip.history-tip{
+    background:var(--panel-bg);border:1px solid var(--accent-2);color:var(--text);
+    font-family:var(--mono);font-size:10px;padding:1px 6px;border-radius:6px;box-shadow:none;
+  }
+  /* Leaflet's standaard tooltip-pijltje past niet bij onze eigen styling */
+  .leaflet-tooltip.history-tip::before{display:none;}
+
+  .utm-zone-label{
+    background:rgba(249,236,227,0.92);border:1px solid var(--accent-2);border-radius:4px;
+    font-family:var(--mono);font-size:10px;font-weight:700;color:var(--text);
+    text-align:center;padding:1px 5px;white-space:nowrap;
+  }
 
   /* --- desktop: uitvoerpaneel als eigen vast paneel rechts ---
      Belangrijk: backdrop-filter staat hier op #output-panel ZELF (het element
@@ -143,7 +328,8 @@
      en verandert niets aan hoe #output-panel zelf gepositioneerd wordt. */
   @media (min-width:768px){
     #output-panel{
-      position:fixed;right:12px;top:12px;bottom:12px;width:320px;z-index:20;
+      position:fixed;right:12px;top:12px;width:320px;z-index:20;
+      max-height:min(680px, calc(100vh - 24px));
       padding:14px;overflow-y:auto;
       background:var(--panel-bg);border:1px solid var(--panel-border);border-radius:var(--radius);
       backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
@@ -154,15 +340,34 @@
   /* --- mobiel: uitvoer wordt integraal onderdeel van het invoer-bodemvenster --- */
   @media (max-width:767px){
     #input-panel{
-      left:0;right:0;bottom:0;width:auto;max-width:360px;margin:0 auto;
+      left:0;right:0;bottom:0;width:auto;max-width:560px;margin:0 auto;
       border-radius:16px 16px 0 0;
-      justify-content:flex-end;overflow:hidden;
-      max-height:172px;transition:max-height .28s ease;
-      padding-bottom:calc(12px + env(safe-area-inset-bottom));
+      max-height:calc(100vh - 24px);overflow-y:auto;
+      /* Geen padding meer rondom hier: die zat de knop hieronder in de weg
+         om echt tot de buitenrand van het paneel te kunnen lopen. De
+         kinderen (output-content, .row) padden zichzelf nu individueel. */
+      padding:0 0 calc(12px + env(safe-area-inset-bottom)) 0;
     }
-    #input-panel.expanded{max-height:86vh;}
-    #output-panel{overflow-y:auto;max-height:60vh;padding-right:2px;}
-    #sheet-toggle{display:block;order:0;}
+    /* Geen "verberg-en-onthul-vanaf-een-vast-punt"-truc meer: de knop zit nu
+       zelf IN #output-panel (als eerste kind, vóór #output-content), dus
+       simpele normale flex-volgorde (button/paneel bovenaan, invoervelden
+       onderaan) + een paneel dat vanaf de onderkant meegroeit is voldoende
+       om de knop echt mee te laten schuiven met het uitklappen. */
+    #output-content{
+      max-height:0;overflow:hidden;transition:max-height .3s ease;
+      padding:0 12px;
+    }
+    #input-panel.expanded #output-content{
+      max-height:65vh;overflow-y:auto;padding:10px 10px 0 12px;
+    }
+    .row{padding:0 12px;}
+    #sheet-toggle{
+      display:flex;order:0;width:100%;align-items:center;justify-content:flex-start;gap:6px;
+      border:none;border-radius:16px 16px 0 0;
+      background:rgba(213,103,76,0.14);cursor:pointer;
+      font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:0.04em;
+      color:var(--text);padding:11px 12px;margin:0;box-sizing:border-box;text-align:left;
+    }
   }
 
   /* --- modals --- */
@@ -196,7 +401,7 @@
 
 <div id="map"></div>
 
-<div id="crosshair">
+<div id="crosshair-center">
   <svg width="44" height="44" viewBox="0 0 44 44">
     <line x1="22" y1="1" x2="22" y2="11" stroke="#ef4444" stroke-width="2.5"/>
     <line x1="22" y1="33" x2="22" y2="43" stroke="#ef4444" stroke-width="2.5"/>
@@ -205,6 +410,8 @@
     <circle cx="22" cy="22" r="9" fill="none" stroke="#ef4444" stroke-width="2.5"/>
     <circle cx="22" cy="22" r="2.2" fill="#ef4444"/>
   </svg>
+</div>
+<div id="sep-badge-wrap">
   <span id="sep-badge" class="hidden"></span>
 </div>
 
@@ -214,60 +421,136 @@
   <div class="brand-row">
     <div class="brand">
       <span class="brand-mark">&#8982;</span>
-      <span class="brand-title">NCPTRANS</span>
+      <span class="brand-title">NCPTrans</span>
     </div>
     <button id="header-collapse" class="icon-btn" title="Inklappen">&#9664;</button>
   </div>
+
+  <div class="header-layers">
+    <details class="layer-details">
+      <summary>Weergave-instellingen</summary>
+      <div class="layer-controls">
+
+        <label class="layer-toggle">
+          <input type="checkbox" id="lat-raster-toggle" autocomplete="off" />
+          <span>LAT-NAP verschil</span>
+        </label>
+        <div class="sub-controls">
+          <span class="field-label">Transparantie</span>
+          <input type="range" id="lat-opacity-slider" min="0" max="100" value="75" />
+
+          <span class="field-label">Kleurschaal (min - max)</span>
+          <div class="dual-slider">
+            <div class="dual-slider-track"></div>
+            <div class="dual-slider-fill" id="color-range-fill"></div>
+            <input type="range" id="color-min-slider" class="dual-range" min="0" max="100" value="0" />
+            <input type="range" id="color-max-slider" class="dual-range" min="0" max="100" value="100" />
+          </div>
+          <span class="slider-value" id="color-range-value">automatisch</span>
+        </div>
+
+        <label class="layer-toggle">
+          <input type="checkbox" id="contour-toggle" autocomplete="off" />
+          <span>Contourlijnen</span>
+        </label>
+        <div class="sub-controls">
+          <span class="field-label">Contourinterval</span>
+          <input type="range" id="contour-interval-slider" min="0" max="7" step="1" value="5" />
+          <div class="tick-row" id="contour-tick-row"></div>
+          <span class="slider-value" id="contour-interval-value">0.25 m</span>
+        </div>
+
+      </div>
+    </details>
+  </div>
+
   <button id="about-btn" class="btn full">&#9432;&nbsp; OVER DEZE TOOL</button>
 </div>
 
 <div id="input-panel" class="panel">
 
   <section id="output-panel">
-    <h3>Horizontaal</h3>
+    <button id="sheet-toggle"><span class="chevron">&#9656;</span> Uitkomst</button>
+    <div id="output-content">
+    <h3>Horizontaal
+      <span id="rd-oob-warning" class="oob-badge hidden"
+        title="Buiten het geldigheidsgebied van de RD-correctiegrids (RDCORR2018) - deze RD-coordinaat is een grove benadering.">!</span>
+    </h3>
     <div class="kv">
-      <span>X (RD)</span><span id="out-rd-x" class="mono val">&mdash;</span>
-      <span>Y (RD)</span><span id="out-rd-y" class="mono val">&mdash;</span>
-      <span>LON (ETRS89)</span><span id="out-lon" class="mono val">&mdash;</span>
-      <span>LAT (ETRS89)</span><span id="out-lat" class="mono val">&mdash;</span>
+      <span class="kv-label">X (RD)</span><span id="out-rd-x" class="mono val">&mdash;</span>
+      <span class="kv-label">Y (RD)</span><span id="out-rd-y" class="mono val">&mdash;</span>
+      <span class="kv-label">LAT (ETRS89)</span><span id="out-lat" class="mono val">&mdash;</span>
+      <span class="kv-label">LON (ETRS89)</span><span id="out-lon" class="mono val">&mdash;</span>
+      <div class="kv-divider"></div>
+      <span class="kv-label">UTM 31N Easting</span><span id="out-utm31-e" class="mono val">&mdash;</span>
+      <span class="kv-label">UTM 31N Northing</span><span id="out-utm31-n" class="mono val">&mdash;</span>
+      <span class="kv-label">UTM 32N Easting</span><span id="out-utm32-e" class="mono val">&mdash;</span>
+      <span class="kv-label">UTM 32N Northing</span><span id="out-utm32-n" class="mono val">&mdash;</span>
+      <div class="kv-divider"></div>
+      <span class="kv-label">LAT (ED50)</span><span id="out-ed50-lat" class="mono val">&mdash;</span>
+      <span class="kv-label">LON (ED50)</span><span id="out-ed50-lon" class="mono val">&mdash;</span>
+    </div>
+
+    <h3>Verwisselingsfout
+      <span class="info-badge" tabindex="0"
+        title="De afwijking in meters, als je denkt een (lat, lon) in te geven in ETRS89, maar per ongeluk de Bessel of ED50 ellipsoide gebruikt hebt. De pijl geeft aan in welke richting de echte ETRS89 latlon positie zou liggen.">?</span>
+    </h3>
+    <div class="kv">
+      <span class="kv-label">RD vs ETRS89</span><span class="mono val"><span id="out-mixup-arrow" class="mixup-arrow">&uarr;</span><span id="out-mixup-dist">&mdash;</span></span>
+      <span class="kv-label">ED50 vs ETRS89</span><span class="mono val"><span id="out-ed50-mixup-arrow" class="mixup-arrow">&uarr;</span><span id="out-ed50-mixup-dist">&mdash;</span></span>
     </div>
 
     <h3>Separaties</h3>
     <div class="kv">
-      <span>Geoid &minus; ellips.</span><span id="out-sep-geoid" class="mono val">&mdash;</span>
-      <span>LAT &minus; ellips.</span><span id="out-sep-lat" class="mono val">&mdash;</span>
-      <span>NAP &minus; LAT</span><span id="out-sep-naplat" class="mono val">&mdash;</span>
+      <span class="kv-label">Geoid &minus; ellips.</span><span id="out-sep-geoid" class="mono val">&mdash;</span>
+      <span class="kv-label">LAT &minus; ellips.</span><span id="out-sep-lat" class="mono val">&mdash;</span>
+      <span class="kv-label">NAP &minus; LAT</span><span id="out-sep-naplat" class="mono val">&mdash;</span>
     </div>
 
     <h3>Hoogtes <small>&mdash; klik om referentie te kiezen</small></h3>
     <div id="height-rows"></div>
 
     <div class="divider"></div>
+    <div class="history-row">
+      <button id="add-history-btn" class="icon-btn" title="Voeg huidig punt toe aan historie">+</button>
+      <button id="history-btn" class="btn ghost" style="flex:1;">&#8987; HISTORIE</button>
+    </div>
     <button id="debug-btn" class="btn full ghost">&lt;/&gt; DEBUG INFO</button>
+    </div>
   </section>
 
-  <button id="sheet-toggle" class="btn full">&#9650; UITKOMST</button>
-
   <div class="row">
-    <label class="field">
-      <span class="field-label">Coordinatensysteem</span>
-      <select id="src-select">
-        <option value="RD">RD (Rijksdriehoek)</option>
-        <option value="ETRS89">ETRS89 (lon/lat)</option>
-      </select>
-    </label>
+    <select id="src-select" autocomplete="off">
+      <option value="RD">RD (Rijksdriehoek)</option>
+      <option value="ETRS89">ETRS89 (lon/lat)</option>
+      <option value="ED50">ED50 (lon/lat)</option>
+      <option value="UTM31N">UTM 31N (E/N)</option>
+      <option value="UTM32N">UTM 32N (E/N)</option>
+    </select>
   </div>
 
   <div class="row">
     <label class="field">
-      <span class="field-label" id="coord1-label">X (RD), m</span>
-      <input id="coord1" type="number" step="any" />
+      <span class="field-label" id="coord1-label">X, m</span>
+      <div class="numeric-field">
+        <input id="coord1" type="text" inputmode="decimal" autocomplete="off" />
+        <div class="stepper">
+          <button type="button" class="stepper-btn" data-target="coord1" data-dir="1" tabindex="-1">&#9650;</button>
+          <button type="button" class="stepper-btn" data-target="coord1" data-dir="-1" tabindex="-1">&#9660;</button>
+        </div>
+      </div>
     </label>
     <label class="field">
-      <span class="field-label" id="coord2-label">Y (RD), m</span>
-      <input id="coord2" type="number" step="any" />
+      <span class="field-label" id="coord2-label">Y, m</span>
+      <div class="numeric-field">
+        <input id="coord2" type="text" inputmode="decimal" autocomplete="off" />
+        <div class="stepper">
+          <button type="button" class="stepper-btn" data-target="coord2" data-dir="1" tabindex="-1">&#9650;</button>
+          <button type="button" class="stepper-btn" data-target="coord2" data-dir="-1" tabindex="-1">&#9660;</button>
+        </div>
+      </div>
     </label>
-    <button id="gps-btn" class="icon-btn" title="Gebruik apparaatlocatie" style="align-self:stretch;height:auto;">&#8982;</button>
+    <button id="gps-btn" class="icon-btn" title="Gebruik apparaatlocatie">&#8982;</button>
   </div>
 
 </div>
@@ -276,17 +559,28 @@
   <div class="modal-box panel">
     <h2>OVER NCPTRANS</h2>
     <p>
-      Coordinatentransformaties tussen RD, ETRS89, NAP, LAT en ellipsoidische hoogte
-      op het Nederlands Continentaal Plat, op basis van <code>NCPTrans.py</code>
-      (RDNAPTRANS2018-methodiek).
+      Coordinatentransformaties tussen RD, ETRS89, ED50, UTM (31N/32N), NAP,
+      LAT en ellipsoidische hoogte op het Nederlands Continentaal Plat, op
+      basis van <code>NCPTrans.py</code> (RDNAPTRANS2018-methodiek). Voer een
+      punt in via een van deze stelsels, of klik/sleep op de kaart.
     </p>
     <p>
-      Deze software is <strong>niet gevalideerd</strong> als officiele RDNAPTRANS2018-implementatie.
-      Gebruik de resultaten niet zonder controle voor kritische of officiele doeleinden.
+      Verder: een LAT-NAP-verschilraster met instelbare kleurschaal en
+      contourlijnen, de UTM 31N/32N-zonegrens, een sessiehistorie van
+      opgeslagen punten, en "verwisselingsfouten" die laten zien hoever je
+      ernaast zou zitten bij het per ongeluk door elkaar halen van
+      coordinaatstelsels.
+    </p>
+    <p>
+      Deze software is <strong>niet gevalideerd</strong> als officiele RDNAPTRANS2018-implementatie,
+      en de ED50-omrekening is een benadering (algemene West-Europese
+      verschuiving, geen Nederland-specifieke fit). Gebruik de resultaten
+      niet zonder controle voor kritische of officiele doeleinden.
     </p>
     <p>
       Kaartlagen: basiskaart &copy; VesselFinder, vaarwatersymbolen &copy; OpenSeaMap.
-      De NCP/EEZ-grens komt van Marine Regions / VLIZ (MRGID 5668).
+      De NCP/EEZ-grens (alleen de lijnstukken op zee) komt van Marine Regions
+      / VLIZ (MRGID 5668).
     </p>
     <button class="btn full modal-close">SLUITEN</button>
   </div>
@@ -300,31 +594,83 @@
   </div>
 </div>
 
+<div id="history-modal" class="modal hidden">
+  <div class="modal-box panel">
+    <h2>HISTORIE (SESSIE)</h2>
+    <div id="history-table-wrap">
+      <table id="history-table" class="mono">
+        <thead>
+          <tr><th>X (RD)</th><th>Y (RD)</th><th>LON</th><th>LAT</th><th>NAP&minus;LAT</th></tr>
+        </thead>
+        <tbody id="history-tbody"></tbody>
+      </table>
+    </div>
+    <button class="btn full modal-close" style="margin-top:10px;">SLUITEN</button>
+  </div>
+</div>
+
 <div id="toast" class="hidden"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/proj4@2/dist/proj4.js"></script>
+<script src="https://unpkg.com/georaster"></script>
+<script src="https://unpkg.com/georaster-layer-for-leaflet/dist/georaster-layer-for-leaflet.min.js"></script>
 <script>
 'use strict';
 
+// nllat2018.tif / latnap2018.tif gebruiken EPSG:9067 (ETRF2000) als
+// geografische CRS in de GeoKeyDirectoryTag. Dat is functioneel identiek aan
+// ETRS89/GRS80 lon-lat, maar proj4js kent deze minder gangbare EPSG-code niet
+// uit zichzelf, wat bij georaster-layer-for-leaflet leidt tot "ran into an
+// issue reprojecting". Door de definitie hier expliciet te registreren (v/e
+// ook 4258 als synoniem) hoeft er geen netwerkopzoeking naar epsg.io te gebeuren.
+if (window.proj4) {
+  proj4.defs('EPSG:9067', '+proj=longlat +ellps=GRS80 +no_defs +type=crs');
+  proj4.defs('EPSG:4258', '+proj=longlat +ellps=GRS80 +no_defs +type=crs');
+}
+
 const XY_LABELS = {
-  RD: ['X (RD), m', 'Y (RD), m'],
-  ETRS89: ['LON, \u00b0', 'LAT, \u00b0'],
+  RD: ['X [m]', 'Y [m]'],
+  ETRS89: ['LAT [\u00b0]', 'LON [\u00b0]'],
+  ED50: ['LAT [\u00b0]', 'LON [\u00b0]'],
+  UTM31N: ['EASTING [m]', 'NORTHING [m]'],
+  UTM32N: ['EASTING [m]', 'NORTHING [m]'],
 };
 const XY_PLACEHOLDERS = {
   RD: ['108360.7859', '415757.2741'],
-  ETRS89: ['3.976206', '52.011555'],
+  ETRS89: ['52.011555', '3.976206'],
+  ED50: ['52.012337', '3.977530'],
+  UTM31N: ['629638.0', '5803631.2'],
+  UTM32N: ['452914.6', '5861375.9'],
 };
 const HEIGHT_REFS = [
   ['NAP', 'NAP (NLGEO2018)'],
   ['LAT', 'LAT (NLLAT2018)'],
   ['ETRS89', 'Ellipsoidisch (ETRS89)'],
 ];
-const EXAMPLE_RD = [108360.7859, 415757.2741];
+const EXAMPLE_RD = [75932.0, 459164.0];
+
+// Vaste, "ronde" stapgroottes voor het contourinterval - de slider kiest
+// een index in deze lijst i.p.v. een vrij instelbare waarde.
+const CONTOUR_STEPS = [0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.5, 1.0];
+
+// Ongeveer 2x het geldigheidsgebied van de RDNAPTRANS-correctiegrids
+// (50-56 gr. NB, 2-8 gr. OL). Wordt niet meer gebruikt om het pannen van de
+// kaart te begrenzen (dat werkte niet lekker), enkel nog als redelijke
+// lengte voor de UTM-zonelijn op de kaart.
+const MAP_MAX_BOUNDS = [[47, -1], [59, 11]];
+const MAP_MAX_ZOOM = 13; // ongeveer 10km x 10km zichtbaar op een gemiddeld scherm
+const MAP_MIN_ZOOM = 6;
 
 const state = {
   srcSystem: 'RD',
   heightRef: 'NAP',
   lastResult: null,
+  history: [],
+  latOpacity: 0.75,
+  contourInterval: 0.25,
+  colorMin: null,
+  colorMax: null,
 };
 
 const coord1 = document.getElementById('coord1');
@@ -333,13 +679,40 @@ const srcSelect = document.getElementById('src-select');
 const gpsBtn = document.getElementById('gps-btn');
 
 let map = null;
+let historyLayer = null;
+let seamarkLayer = null;
+let ncpBoundaryLayer = null;
+let utmZonesLayer = null;
 let suppressNextMoveEnd = false;
+let pendingCount = 0;
+
+let latGeoraster = null;
+let latRasterLayer = null;
+let latContourLayer = null;
+let latRasterLoading = false;
+let latRasterActive = false;
+let contourActive = false;
+let contourLoading = false;
 
 function fmtUnit(v, d, unit) {
   return (v === null || v === undefined) ? '\u2014' : `${Number(v).toFixed(d)} ${unit}`;
 }
 function fmtNum(v, d) {
   return (v === null || v === undefined) ? '' : Number(v).toFixed(d);
+}
+function parseFlexibleFloat(str) {
+  // Accepteert zowel punt als komma als decimaalteken (Nederlandse
+  // toetsenborden/locale-instellingen typen vaak een komma).
+  if (str === null || str === undefined) return NaN;
+  return parseFloat(String(str).trim().replace(',', '.'));
+}
+function cssVar(name, fallback) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
+function debounce(fn, ms) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }
 
 function showToast(msg, isError) {
@@ -351,36 +724,512 @@ function showToast(msg, isError) {
   showToast._timer = setTimeout(() => t.classList.add('hidden'), 5000);
 }
 
+function setLoading(isLoading) {
+  const el = document.getElementById('crosshair-center');
+  if (isLoading) {
+    pendingCount++;
+    el.classList.add('loading');
+  } else {
+    pendingCount = Math.max(0, pendingCount - 1);
+    if (pendingCount === 0) el.classList.remove('loading');
+  }
+}
+
+/* ---------------------------------------------------------------- */
+/* Vrije ruimte (buiten de drie vensters) + kruis-positionering       */
+/* ---------------------------------------------------------------- */
+
+function getFreeCenterPixel() {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const isMobile = vw <= 767;
+  let cx = vw / 2;
+  let cy = vh / 2;
+
+  if (isMobile) {
+    const sheet = document.getElementById('input-panel');
+    const rect = sheet.getBoundingClientRect();
+    cy = Math.max(40, rect.top / 2);
+    cx = vw / 2;
+  } else {
+    const out = document.getElementById('output-panel');
+    const rect = out.getBoundingClientRect();
+    cx = Math.max(40, rect.left / 2);
+    cy = vh / 2;
+  }
+  return { x: Math.round(cx), y: Math.round(cy) };
+}
+
+function positionCrosshair() {
+  const { x, y } = getFreeCenterPixel();
+  const c = document.getElementById('crosshair-center');
+  c.style.left = x + 'px';
+  c.style.top = y + 'px';
+  const b = document.getElementById('sep-badge-wrap');
+  b.style.left = (x + 26) + 'px';
+  b.style.top = y + 'px';
+  return { x, y };
+}
+
+function centerMapAtPixel(lat, lon, targetX, targetY, opts) {
+  if (!map) return;
+  opts = opts || {};
+  const zoom = map.getZoom();
+  const targetPoint = map.project([lat, lon], zoom);
+  const size = map.getSize();
+  const offset = L.point(targetX - size.x / 2, targetY - size.y / 2);
+  const newCenterPoint = targetPoint.subtract(offset);
+  const newCenter = map.unproject(newCenterPoint, zoom);
+  suppressNextMoveEnd = true;
+  map.setView(newCenter, zoom, { animate: opts.animate !== false });
+}
+
+function resyncView() {
+  const { x, y } = positionCrosshair();
+  if (map && state.lastResult && state.lastResult.etrs_lat !== null && state.lastResult.etrs_lat !== undefined) {
+    centerMapAtPixel(state.lastResult.etrs_lat, state.lastResult.etrs_lon, x, y, { animate: false });
+  }
+}
+
 /* ---------------------------------------------------------------- */
 /* Kaart                                                              */
 /* ---------------------------------------------------------------- */
 
 function initMap() {
-  map = L.map('map', { zoomControl: false, attributionControl: true }).setView([52.9, 4.5], 8);
+  map = L.map('map', {
+    zoomControl: false,
+    attributionControl: true,
+    maxZoom: MAP_MAX_ZOOM,
+    minZoom: MAP_MIN_ZOOM,
+  }).setView([52.9, 4.5], 8);
 
   L.tileLayer('https://map.vesselfinder.net/simple/{z}/{x}/{y}.png', {
     maxZoom: 18,
     attribution: '&copy; VesselFinder',
   }).addTo(map);
 
-  L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
+  seamarkLayer = L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
     maxZoom: 18,
     attribution: '&copy; OpenSeaMap contributors',
   }).addTo(map);
+
+  utmZonesLayer = buildUtmZonesLayer().addTo(map);
+
+  historyLayer = L.layerGroup().addTo(map);
 
   map.on('click', (e) => setPointFromLonLat(e.latlng.lng, e.latlng.lat));
 
   map.on('moveend', () => {
     if (suppressNextMoveEnd) { suppressNextMoveEnd = false; return; }
-    const c = map.getCenter();
-    setPointFromLonLat(c.lng, c.lat, { recenter: false });
+    const { x, y } = getFreeCenterPixel();
+    const latlng = map.containerPointToLatLng([x, y]);
+    setPointFromLonLat(latlng.lng, latlng.lat, { recenter: false });
   });
+
+  map.on('moveend zoomend', debounce(() => {
+    updateContourAvailability();
+    if (contourActive) rebuildLatContours();
+  }, 250));
 
   loadNcpBoundary();
 }
 
+/* ---------------------------------------------------------------- */
+/* UTM-zonegrens (31N/32N), puur ter oriëntatie op de kaart - altijd  */
+/* zichtbaar, geen labels (die maakten de kaart onrustig)             */
+/* ---------------------------------------------------------------- */
+
+function buildUtmZonesLayer() {
+  const group = L.layerGroup();
+  const boundaryLon = 6.0;
+  L.polyline([[MAP_MAX_BOUNDS[0][0], boundaryLon], [MAP_MAX_BOUNDS[1][0], boundaryLon]], {
+    color: cssVar('--accent-2', '#D5674C'), weight: 1.5, dashArray: '2 6', opacity: 0.85,
+  }).addTo(group);
+  return group;
+}
+
+/* ---------------------------------------------------------------- */
+/* LAT-NAP-verschilraster (optionele kaartlaag, aan/uit + transparantie */
+/* + gebruikersinstelbaar contourinterval)                              */
+/* ---------------------------------------------------------------- */
+
+// Benadering van de klassieke "Haxby"-kleurenschaal (veelgebruikt voor
+// bathymetrie/geofysische grids), met een handvol lineair geïnterpoleerde
+// steunkleuren - geen exacte reproductie, maar wel direct herkenbaar.
+const HAXBY_STOPS = [
+  [0.000, [37, 57, 175]],
+  [0.111, [25, 90, 208]],
+  [0.222, [13, 129, 236]],
+  [0.333, [34, 163, 250]],
+  [0.444, [77, 190, 253]],
+  [0.556, [135, 216, 249]],
+  [0.667, [198, 231, 214]],
+  [0.778, [233, 232, 165]],
+  [0.889, [255, 220, 120]],
+  [1.000, [255, 165, 66]],
+];
+
+function sampleHaxby(t) {
+  t = Math.max(0, Math.min(1, t));
+  for (let i = 0; i < HAXBY_STOPS.length - 1; i++) {
+    const [t0, c0] = HAXBY_STOPS[i];
+    const [t1, c1] = HAXBY_STOPS[i + 1];
+    if (t >= t0 && t <= t1) {
+      const f = (t1 > t0) ? (t - t0) / (t1 - t0) : 0;
+      return [
+        Math.round(c0[0] + (c1[0] - c0[0]) * f),
+        Math.round(c0[1] + (c1[1] - c0[1]) * f),
+        Math.round(c0[2] + (c1[2] - c0[2]) * f),
+      ];
+    }
+  }
+  return HAXBY_STOPS[HAXBY_STOPS.length - 1][1];
+}
+
+function applyContrast(t, factor) {
+  return Math.max(0, Math.min(1, 0.5 + (t - 0.5) * factor));
+}
+
+function latRasterColor(v, georaster) {
+  if (v === null || v === undefined || Number.isNaN(v)) return null;
+  const nodata = georaster.noDataValue;
+  if (nodata !== undefined && nodata !== null && v === nodata) return null;
+
+  const dataMin = (georaster.mins && georaster.mins[0] !== undefined) ? georaster.mins[0] : 0;
+  const dataMax = (georaster.maxs && georaster.maxs[0] !== undefined) ? georaster.maxs[0] : 1;
+  const min = state.colorMin !== null ? state.colorMin : dataMin;
+  const max = state.colorMax !== null ? state.colorMax : dataMax;
+  const t = (max > min) ? (v - min) / (max - min) : 0.5;
+  const [r, g, b] = sampleHaxby(applyContrast(t, 1.4));
+  return `rgb(${r},${g},${b})`;
+}
+
+/* ---------------------------------------------------------------- */
+/* Contourlijnen met labels over het LAT-NAP-raster (marching squares */
+/* op een verkleind rooster, alleen voor het momenteel zichtbare      */
+/* kaartgebied - dat houdt het snel en scheelt onnodig werk buiten    */
+/* beeld)                                                              */
+/* ---------------------------------------------------------------- */
+
+function computeVisibleGridWindow(georaster) {
+  if (!map) return null;
+  const bounds = map.getBounds();
+  const latMin = Math.max(bounds.getSouth(), georaster.ymin);
+  const latMax = Math.min(bounds.getNorth(), georaster.ymax);
+  const lonMin = Math.max(bounds.getWest(), georaster.xmin);
+  const lonMax = Math.min(bounds.getEast(), georaster.xmax);
+  if (latMin >= latMax || lonMin >= lonMax) return null;
+
+  const rowFromLat = (lat) => Math.round((georaster.ymax - lat) / georaster.pixelHeight);
+  const colFromLon = (lon) => Math.round((lon - georaster.xmin) / georaster.pixelWidth);
+
+  const rowStart = Math.max(0, rowFromLat(latMax));
+  const rowEnd = Math.min(georaster.height - 1, rowFromLat(latMin));
+  const colStart = Math.max(0, colFromLon(lonMin));
+  const colEnd = Math.min(georaster.width - 1, colFromLon(lonMax));
+  if (rowEnd <= rowStart || colEnd <= colStart) return null;
+  return { rowStart, rowEnd, colStart, colEnd };
+}
+
+function buildContoursLayer(georaster, interval, win) {
+  const group = L.layerGroup();
+  if (!win || !(interval > 0)) return group;
+
+  const data = georaster.values[0];
+  const nodata = georaster.noDataValue;
+  const { rowStart, rowEnd, colStart, colEnd } = win;
+  const rowsAvail = rowEnd - rowStart + 1;
+  const colsAvail = colEnd - colStart + 1;
+
+  const targetRes = 220;
+  const stepRow = Math.max(1, Math.floor(rowsAvail / targetRes));
+  const stepCol = Math.max(1, Math.floor(colsAvail / targetRes));
+
+  const coarseRowIdx = [];
+  for (let r = rowStart; r <= rowEnd; r += stepRow) coarseRowIdx.push(r);
+  const coarseColIdx = [];
+  for (let c = colStart; c <= colEnd; c += stepCol) coarseColIdx.push(c);
+
+  const coarse = coarseRowIdx.map((r) => coarseColIdx.map((c) => {
+    const v = data[r][c];
+    return (nodata !== undefined && nodata !== null && v === nodata) ? NaN : v;
+  }));
+
+  function toLatLon(rowIdx, colIdx) {
+    const origRow = rowStart + rowIdx * stepRow;
+    const origCol = colStart + colIdx * stepCol;
+    return [georaster.ymax - origRow * georaster.pixelHeight, georaster.xmin + origCol * georaster.pixelWidth];
+  }
+
+  const min = georaster.mins[0];
+  const max = georaster.maxs[0];
+  const levels = [];
+  const first = Math.ceil(min / interval) * interval;
+  for (let l = first; l <= max; l += interval) levels.push(Math.round(l * 1000) / 1000);
+
+  const ch = coarse.length;
+  const cw = ch ? coarse[0].length : 0;
+
+  levels.forEach((level) => {
+    const segs = [];
+    for (let row = 0; row < ch - 1; row++) {
+      for (let col = 0; col < cw - 1; col++) {
+        const a = coarse[row][col];
+        const b = coarse[row][col + 1];
+        const c = coarse[row + 1][col + 1];
+        const d = coarse[row + 1][col];
+        if ([a, b, c, d].some((v) => Number.isNaN(v))) continue;
+
+        const bits = (a >= level ? 1 : 0) | (b >= level ? 2 : 0) | (c >= level ? 4 : 0) | (d >= level ? 8 : 0);
+        if (bits === 0 || bits === 15) continue;
+
+        const interp = (r1, c1, v1, r2, c2, v2) => {
+          const f = (level - v1) / (v2 - v1);
+          return toLatLon(r1 + (r2 - r1) * f, c1 + (c2 - c1) * f);
+        };
+        const top = () => interp(row, col, a, row, col + 1, b);
+        const right = () => interp(row, col + 1, b, row + 1, col + 1, c);
+        const bottom = () => interp(row + 1, col, d, row + 1, col + 1, c);
+        const left = () => interp(row, col, a, row + 1, col, d);
+
+        switch (bits) {
+          case 1: case 14: segs.push([left(), top()]); break;
+          case 2: case 13: segs.push([top(), right()]); break;
+          case 3: case 12: segs.push([left(), right()]); break;
+          case 4: case 11: segs.push([right(), bottom()]); break;
+          case 6: case 9: segs.push([top(), bottom()]); break;
+          case 7: case 8: segs.push([left(), bottom()]); break;
+          case 5: segs.push([left(), top()], [right(), bottom()]); break;
+          case 10: segs.push([top(), right()], [bottom(), left()]); break;
+          default: break;
+        }
+      }
+    }
+    if (!segs.length) return;
+
+    L.polyline(segs, { color: '#2b2b2b', weight: 1, opacity: 0.55 }).addTo(group);
+
+    const mid = segs[Math.floor(segs.length / 2)];
+    const midLat = (mid[0][0] + mid[1][0]) / 2;
+    const midLon = (mid[0][1] + mid[1][1]) / 2;
+    L.marker([midLat, midLon], {
+      icon: L.divIcon({ className: 'contour-label', html: level.toFixed(2), iconSize: [36, 13] }),
+      interactive: false,
+    }).addTo(group);
+  });
+
+  return group;
+}
+
+function rebuildLatContours() {
+  if (!contourActive || !latGeoraster || !map) return;
+  const win = computeVisibleGridWindow(latGeoraster);
+  const fresh = buildContoursLayer(latGeoraster, state.contourInterval, win);
+  if (latContourLayer) map.removeLayer(latContourLayer);
+  latContourLayer = fresh;
+  latContourLayer.addTo(map);
+}
+
+async function ensureLatGeoraster() {
+  if (latGeoraster) return latGeoraster;
+  const resp = await fetch('/api/latnap-raster');
+  if (!resp.ok) {
+    const info = await resp.json().catch(() => ({}));
+    throw new Error(info.error || `serverfout (${resp.status})`);
+  }
+  const buf = await resp.arrayBuffer();
+  latGeoraster = await parseGeoraster(buf);
+  initColorRangeSliders(latGeoraster);
+  return latGeoraster;
+}
+
+function initColorRangeSliders(georaster) {
+  const dataMin = (georaster.mins && georaster.mins[0] !== undefined) ? georaster.mins[0] : 0;
+  const dataMax = (georaster.maxs && georaster.maxs[0] !== undefined) ? georaster.maxs[0] : 1;
+  const minSlider = document.getElementById('color-min-slider');
+  const maxSlider = document.getElementById('color-max-slider');
+  minSlider.min = dataMin;
+  minSlider.max = dataMax;
+  minSlider.step = (dataMax - dataMin) / 200 || 0.01;
+  minSlider.value = dataMin;
+  maxSlider.min = dataMin;
+  maxSlider.max = dataMax;
+  maxSlider.step = (dataMax - dataMin) / 200 || 0.01;
+  maxSlider.value = dataMax;
+  state.colorMin = null;
+  state.colorMax = null;
+  document.getElementById('color-range-value').textContent = 'automatisch';
+  updateDualSliderFill();
+}
+
+function updateDualSliderFill() {
+  const minSlider = document.getElementById('color-min-slider');
+  const maxSlider = document.getElementById('color-max-slider');
+  const rangeMin = parseFloat(minSlider.min);
+  const rangeMax = parseFloat(minSlider.max);
+  const span = (rangeMax - rangeMin) || 1;
+  const minVal = parseFloat(minSlider.value);
+  const maxVal = parseFloat(maxSlider.value);
+  const fill = document.getElementById('color-range-fill');
+  const leftPct = Math.max(0, Math.min(100, ((minVal - rangeMin) / span) * 100));
+  const rightPct = Math.max(0, Math.min(100, 100 - ((maxVal - rangeMin) / span) * 100));
+  fill.style.left = leftPct + '%';
+  fill.style.right = rightPct + '%';
+}
+
+function onColorRangeChange() {
+  const minSlider = document.getElementById('color-min-slider');
+  const maxSlider = document.getElementById('color-max-slider');
+  let min = parseFloat(minSlider.value);
+  let max = parseFloat(maxSlider.value);
+  if (min >= max) {
+    // minimaal een klein verschil aanhouden, anders klapt de schaal in elkaar
+    const step = parseFloat(minSlider.step) || 0.01;
+    max = min + step;
+    maxSlider.value = max;
+  }
+  state.colorMin = min;
+  state.colorMax = max;
+  document.getElementById('color-range-value').textContent = `${min.toFixed(2)} tot ${max.toFixed(2)} m`;
+  updateDualSliderFill();
+  forceRasterRepaint();
+}
+
+function forceRasterRepaint() {
+  if (!latRasterLayer || !map || !latGeoraster) return;
+  const freshColorFn = (values) => latRasterColor(values[0], latGeoraster);
+
+  // georaster-layer-for-leaflet cachet gerenderde tegels; .redraw() alleen
+  // bleek in de praktijk niet altijd voldoende om die cache echt te legen.
+  // updateColors() is de eigen, voor dit doel bedoelde methode van de
+  // library (werkt de kleurfunctie bij EN dwingt een herteken af); mocht
+  // die er niet zijn, vervangen we de hele laag door een gloednieuw object
+  // (dat heeft gegarandeerd geen eigen tegel-cache van de vorige instantie).
+  try {
+    if (typeof latRasterLayer.updateColors === 'function') {
+      latRasterLayer.updateColors(freshColorFn);
+      return;
+    }
+  } catch (err) { /* val terug op volledige vervanging hieronder */ }
+
+  const wasOnMap = map.hasLayer(latRasterLayer);
+  if (wasOnMap) map.removeLayer(latRasterLayer);
+  latRasterLayer = new GeoRasterLayer({
+    georaster: latGeoraster,
+    resolution: 128,
+    opacity: state.latOpacity,
+    pixelValuesToColorFn: freshColorFn,
+  });
+  if (wasOnMap) latRasterLayer.addTo(map);
+}
+
+async function toggleLatRaster(checked) {
+  latRasterActive = checked;
+  if (!checked) {
+    if (latRasterLayer) map.removeLayer(latRasterLayer);
+    return;
+  }
+  if (latRasterLoading) return;
+  latRasterLoading = true;
+  try {
+    await ensureLatGeoraster();
+    if (!latRasterLayer) {
+      latRasterLayer = new GeoRasterLayer({
+        georaster: latGeoraster,
+        resolution: 128,
+        opacity: state.latOpacity,
+        pixelValuesToColorFn: (values) => latRasterColor(values[0], latGeoraster),
+      });
+    }
+    latRasterLayer.addTo(map);
+  } catch (err) {
+    showToast('Kon LAT-NAP-raster niet laden: ' + err.message, true);
+    latRasterActive = false;
+    const cb = document.getElementById('lat-raster-toggle');
+    if (cb) cb.checked = false;
+  } finally {
+    latRasterLoading = false;
+  }
+}
+
+async function toggleContours(checked) {
+  contourActive = checked;
+  if (!checked) {
+    if (latContourLayer) map.removeLayer(latContourLayer);
+    return;
+  }
+  if (contourLoading) return;
+  contourLoading = true;
+  try {
+    await ensureLatGeoraster();
+    updateContourAvailability();
+    rebuildLatContours();
+  } catch (err) {
+    showToast('Kon LAT-NAP-raster niet laden: ' + err.message, true);
+    contourActive = false;
+    const cb = document.getElementById('contour-toggle');
+    if (cb) cb.checked = false;
+  } finally {
+    contourLoading = false;
+  }
+}
+
+function onLatOpacityChange(value) {
+  state.latOpacity = value;
+  if (latRasterLayer) latRasterLayer.setOpacity(value);
+}
+
+function onContourIntervalChange(value) {
+  state.contourInterval = value;
+  document.getElementById('contour-interval-value').textContent = `${value.toFixed(2)} m`;
+  if (contourActive) rebuildLatContours();
+}
+
+/* ---------------------------------------------------------------- */
+/* Contourinterval: fijnere stappen alleen beschikbaar bij voldoende  */
+/* inzoomen (0.2 m en grover mag altijd)                              */
+/* ---------------------------------------------------------------- */
+
+function minAllowedContourIndex(zoom) {
+  if (zoom >= 12) return 0; // 0.01 m
+  if (zoom >= 11) return 1; // 0.02 m
+  if (zoom >= 9) return 2;  // 0.05 m
+  if (zoom >= 8) return 3;  // 0.1 m
+  return 4;                  // 0.2 m - altijd toegestaan
+}
+
+function buildContourTicks() {
+  const row = document.getElementById('contour-tick-row');
+  row.innerHTML = '';
+  CONTOUR_STEPS.forEach((_val, idx) => {
+    const tick = document.createElement('span');
+    tick.className = 'tick';
+    tick.dataset.idx = String(idx);
+    row.appendChild(tick);
+  });
+}
+
+function updateContourAvailability() {
+  if (!map) return;
+  const zoom = map.getZoom();
+  const minIdx = minAllowedContourIndex(zoom);
+  const slider = document.getElementById('contour-interval-slider');
+  // De slider zelf blijft altijd het volledige bereik (0..N-1) beslaan;
+  // we passen alleen de WAARDE aan als de huidige keuze niet meer mag,
+  // en grijzen de niet-beschikbare tick-markeringen uit. Zo verspringt de
+  // schaalverdeling van de slider zelf nooit bij het zoomen.
+  if (parseInt(slider.value, 10) < minIdx) {
+    slider.value = minIdx;
+    onContourIntervalChange(CONTOUR_STEPS[minIdx]);
+  }
+  document.querySelectorAll('#contour-tick-row .tick').forEach((tick) => {
+    const idx = parseInt(tick.dataset.idx, 10);
+    tick.classList.toggle('disabled', idx < minIdx);
+  });
+}
+
 function drawFallbackBounds() {
-  L.rectangle([[50, 2], [56, 8]], { color: '#38bdf8', weight: 1, fill: false, dashArray: '4' }).addTo(map);
+  ncpBoundaryLayer = L.rectangle([[50, 2], [56, 8]], { color: '#38bdf8', weight: 1, fill: false, dashArray: '4' }).addTo(map);
 }
 
 async function loadNcpBoundary() {
@@ -388,7 +1237,7 @@ async function loadNcpBoundary() {
     const resp = await fetch('/api/ncp-boundary');
     const data = await resp.json();
     if (data && data.features && data.features.length) {
-      L.geoJSON(data, { style: { color: '#f87171', weight: 2, fill: false, dashArray: '6 4' } }).addTo(map);
+      ncpBoundaryLayer = L.geoJSON(data, { style: { color: '#f87171', weight: 2 } }).addTo(map);
       return;
     }
   } catch (err) { /* val terug */ }
@@ -403,10 +1252,11 @@ async function callTransform(x, y, srcXy) {
   const ref = state.heightRef;
   const hInput = document.querySelector(`.height-row[data-ref="${ref}"] .height-input`);
   const raw = hInput ? hInput.value : '';
-  const h = raw !== '' && raw !== null ? parseFloat(raw) : null;
+  const h = raw !== '' && raw !== null ? parseFlexibleFloat(raw) : null;
 
   const body = { x, y, src_xy: srcXy, h, src_h: h !== null ? ref : null };
 
+  setLoading(true);
   try {
     const resp = await fetch('/api/transform', {
       method: 'POST',
@@ -422,6 +1272,8 @@ async function callTransform(x, y, srcXy) {
   } catch (err) {
     showToast('Kan geen verbinding maken met de NCPTrans-server.', true);
     return null;
+  } finally {
+    setLoading(false);
   }
 }
 
@@ -437,10 +1289,33 @@ function applyResultToInputs(result) {
   if (state.srcSystem === 'RD') {
     coord1.value = fmtNum(result.rd_x, 1);
     coord2.value = fmtNum(result.rd_y, 1);
-  } else {
-    coord1.value = fmtNum(result.etrs_lon, 6);
-    coord2.value = fmtNum(result.etrs_lat, 6);
+  } else if (state.srcSystem === 'ETRS89') {
+    coord1.value = fmtNum(result.etrs_lat, 6);
+    coord2.value = fmtNum(result.etrs_lon, 6);
+  } else if (state.srcSystem === 'ED50') {
+    coord1.value = fmtNum(result.ed50_lat, 6);
+    coord2.value = fmtNum(result.ed50_lon, 6);
+  } else if (state.srcSystem === 'UTM31N') {
+    coord1.value = fmtNum(result.utm31_easting, 1);
+    coord2.value = fmtNum(result.utm31_northing, 1);
+  } else if (state.srcSystem === 'UTM32N') {
+    coord1.value = fmtNum(result.utm32_easting, 1);
+    coord2.value = fmtNum(result.utm32_northing, 1);
   }
+}
+
+function setMixupArrow(elId, bearingDeg) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (bearingDeg === null || bearingDeg === undefined || Number.isNaN(bearingDeg)) {
+    el.style.visibility = 'hidden';
+    return;
+  }
+  el.style.visibility = 'visible';
+  // Basisglyph (&uarr;) wijst naar het noorden (0 gr.); CSS-rotate draait
+  // met de klok mee bij positieve graden - dat komt exact overeen met de
+  // bearing-conventie (0=N, 90=O, 180=Z, 270=W) uit de backend.
+  el.style.transform = `rotate(${bearingDeg}deg)`;
 }
 
 function renderAll(result, opts) {
@@ -449,8 +1324,30 @@ function renderAll(result, opts) {
 
   document.getElementById('out-rd-x').textContent = fmtUnit(result.rd_x, 1, 'm');
   document.getElementById('out-rd-y').textContent = fmtUnit(result.rd_y, 1, 'm');
-  document.getElementById('out-lon').textContent = fmtUnit(result.etrs_lon, 6, '\u00b0');
+  document.getElementById('rd-oob-warning').classList.toggle('hidden', !result.rd_out_of_bounds);
+  document.getElementById('out-rd-x').classList.toggle('oob', !!result.rd_out_of_bounds);
+  document.getElementById('out-rd-y').classList.toggle('oob', !!result.rd_out_of_bounds);
   document.getElementById('out-lat').textContent = fmtUnit(result.etrs_lat, 6, '\u00b0');
+  document.getElementById('out-lon').textContent = fmtUnit(result.etrs_lon, 6, '\u00b0');
+
+  document.getElementById('out-utm31-e').textContent = fmtUnit(result.utm31_easting, 1, 'm');
+  document.getElementById('out-utm31-n').textContent = fmtUnit(result.utm31_northing, 1, 'm');
+  document.getElementById('out-utm32-e').textContent = fmtUnit(result.utm32_easting, 1, 'm');
+  document.getElementById('out-utm32-n').textContent = fmtUnit(result.utm32_northing, 1, 'm');
+
+  document.getElementById('out-ed50-lat').textContent = fmtUnit(result.ed50_lat, 6, '\u00b0');
+  document.getElementById('out-ed50-lon').textContent = fmtUnit(result.ed50_lon, 6, '\u00b0');
+
+  document.getElementById('out-mixup-dist').textContent = fmtUnit(result.rd_etrs_mixup_distance, 1, 'm');
+  document.getElementById('out-ed50-mixup-dist').textContent = fmtUnit(result.ed50_etrs_mixup_distance, 1, 'm');
+  setMixupArrow('out-mixup-arrow', result.rd_etrs_mixup_bearing);
+  setMixupArrow('out-ed50-mixup-arrow', result.ed50_etrs_mixup_bearing);
+
+  const zone31Els = [document.getElementById('out-utm31-e'), document.getElementById('out-utm31-n')];
+  const zone32Els = [document.getElementById('out-utm32-e'), document.getElementById('out-utm32-n')];
+  const nativeZone = result.utm_native_zone;
+  zone31Els.forEach((el) => el.classList.toggle('dim', nativeZone !== null && nativeZone !== undefined && nativeZone !== 31));
+  zone32Els.forEach((el) => el.classList.toggle('dim', nativeZone !== null && nativeZone !== undefined && nativeZone !== 32));
 
   document.getElementById('out-sep-geoid').textContent = fmtUnit(result.geoid_ellipsoid_separation, 3, 'm');
   document.getElementById('out-sep-lat').textContent = fmtUnit(result.lat_ellipsoid_separation, 3, 'm');
@@ -475,8 +1372,8 @@ function renderAll(result, opts) {
   renderDebug(result.debug || {});
 
   if (opts.recenter !== false && result.etrs_lat !== null && result.etrs_lon !== null && map) {
-    suppressNextMoveEnd = true;
-    map.setView([result.etrs_lat, result.etrs_lon], map.getZoom());
+    const { x, y } = positionCrosshair();
+    centerMapAtPixel(result.etrs_lat, result.etrs_lon, x, y);
   }
 }
 
@@ -486,16 +1383,90 @@ function renderDebug(debugObj) {
 }
 
 /* ---------------------------------------------------------------- */
+/* Historie (sessie)                                                   */
+/* ---------------------------------------------------------------- */
+
+function addCurrentToHistory() {
+  const r = state.lastResult;
+  if (!r || r.etrs_lat === null || r.etrs_lat === undefined) {
+    showToast('Nog geen geldig punt om toe te voegen.', true);
+    return;
+  }
+  const entry = {
+    rd_x: r.rd_x, rd_y: r.rd_y,
+    lon: r.etrs_lon, lat: r.etrs_lat,
+    sep: r.geoid_lat_separation,
+  };
+  state.history.push(entry);
+
+  const sepText = entry.sep !== null && entry.sep !== undefined ? fmtUnit(entry.sep, 3, 'm') : '\u2014';
+  L.circleMarker([entry.lat, entry.lon], {
+    radius: 5, weight: 2,
+    color: cssVar('--accent-2', '#D5674C'),
+    fillColor: '#fff', fillOpacity: 0.9,
+  }).bindTooltip(sepText, { permanent: true, direction: 'right', offset: [6, 0], className: 'history-tip' })
+    .addTo(historyLayer);
+
+  renderHistoryTable();
+  showToast('Punt toegevoegd aan historie.', false);
+}
+
+function renderHistoryTable() {
+  const tbody = document.getElementById('history-tbody');
+  tbody.innerHTML = '';
+  for (let i = state.history.length - 1; i >= 0; i--) {
+    const e = state.history[i];
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td>${fmtNum(e.rd_x, 1)}</td><td>${fmtNum(e.rd_y, 1)}</td>` +
+      `<td>${fmtNum(e.lon, 6)}</td><td>${fmtNum(e.lat, 6)}</td>` +
+      `<td>${e.sep !== null && e.sep !== undefined ? fmtNum(e.sep, 3) : '\u2014'}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+/* ---------------------------------------------------------------- */
 /* Invoer-events                                                      */
 /* ---------------------------------------------------------------- */
 
+function coordsToApiXY(system, c1, c2) {
+  // De API (en NCPTrans zelf) verwacht voor geografische stelsels x=lon,
+  // y=lat; het invoerpaneel toont nu bewust eerst LAT dan LON, dus die
+  // twee moeten hier omgewisseld worden voordat ze de deur uit gaan.
+  if (system === 'ETRS89' || system === 'ED50') {
+    return [c2, c1];
+  }
+  return [c1, c2];
+}
+
 function onCoordChange() {
-  const x = parseFloat(coord1.value);
-  const y = parseFloat(coord2.value);
-  if (Number.isNaN(x) || Number.isNaN(y)) return;
+  const c1 = parseFlexibleFloat(coord1.value);
+  const c2 = parseFlexibleFloat(coord2.value);
+  if (Number.isNaN(c1) || Number.isNaN(c2)) return;
+  const [x, y] = coordsToApiXY(state.srcSystem, c1, c2);
   callTransform(x, y, state.srcSystem).then((result) => {
     if (!result) return;
     renderAll(result);
+  });
+}
+
+function stepCoordField(inputEl, dir) {
+  const step = state.srcSystem === 'RD' ? 0.1 : 0.0001;
+  const decimals = state.srcSystem === 'RD' ? 1 : 6;
+  const current = parseFlexibleFloat(inputEl.value);
+  const base = Number.isNaN(current) ? 0 : current;
+  inputEl.value = (base + dir * step).toFixed(decimals);
+  onCoordChange();
+}
+
+function wireCoordSteppers() {
+  document.querySelectorAll('.stepper-btn[data-target]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.target;
+      const dir = parseInt(btn.dataset.dir, 10);
+      const inputEl = document.getElementById(target);
+      if (inputEl) stepCoordField(inputEl, dir);
+    });
   });
 }
 
@@ -515,6 +1486,53 @@ function onSrcSystemChange() {
   onCoordChange();
 }
 
+function recomputeHeightsLocally() {
+  // De horizontale positie verandert niet als je alleen de hoogte-invoer
+  // aanpast; de geoid-/LAT-separaties op dit punt (uit de laatste echte
+  // berekening) blijven dus gewoon geldig. Zo kunnen we de twee andere
+  // hoogtes puur client-side afleiden, zonder de server opnieuw te vragen.
+  if (!state.lastResult) { onCoordChange(); return; }
+
+  const ref = state.heightRef;
+  const activeInput = document.querySelector(`.height-row[data-ref="${ref}"] .height-input`);
+  const h = activeInput ? parseFlexibleFloat(activeInput.value) : NaN;
+  if (Number.isNaN(h)) return;
+
+  const geoidSep = state.lastResult.geoid_ellipsoid_separation;
+  const latSep = state.lastResult.lat_ellipsoid_separation;
+  let ellipsoidal = null;
+  let nap = null;
+  let lat = null;
+
+  if (ref === 'NAP') {
+    nap = h;
+    ellipsoidal = (geoidSep !== null && geoidSep !== undefined) ? h + geoidSep : null;
+    lat = (ellipsoidal !== null && latSep !== null && latSep !== undefined) ? ellipsoidal - latSep : null;
+  } else if (ref === 'ETRS89') {
+    ellipsoidal = h;
+    nap = (geoidSep !== null && geoidSep !== undefined) ? h - geoidSep : null;
+    lat = (latSep !== null && latSep !== undefined) ? h - latSep : null;
+  } else if (ref === 'LAT') {
+    lat = h;
+    ellipsoidal = (latSep !== null && latSep !== undefined) ? h + latSep : null;
+    nap = (ellipsoidal !== null && geoidSep !== null && geoidSep !== undefined) ? ellipsoidal - geoidSep : null;
+  }
+
+  const heightValues = { NAP: nap, LAT: lat, ETRS89: ellipsoidal };
+  document.querySelectorAll('.height-row').forEach((row) => {
+    const key = row.dataset.ref;
+    if (key !== ref) {
+      row.querySelector('.height-input').value = fmtNum(heightValues[key], 3);
+    }
+  });
+
+  // Lokale kopie van het laatste resultaat ook bijwerken, zodat een
+  // volgende lokale herberekening (of referentiewissel) weer klopt.
+  state.lastResult.nap_height = nap;
+  state.lastResult.lat_height = lat;
+  state.lastResult.ellipsoidal_height = ellipsoidal;
+}
+
 function setHeightReference(ref) {
   state.heightRef = ref;
   document.querySelectorAll('.height-row').forEach((row) => {
@@ -525,7 +1543,7 @@ function setHeightReference(ref) {
     if (active) input.removeAttribute('readonly');
     else input.setAttribute('readonly', 'readonly');
   });
-  onCoordChange();
+  recomputeHeightsLocally();
 }
 
 function buildHeightRows() {
@@ -546,18 +1564,47 @@ function buildHeightRows() {
     labelEl.addEventListener('click', () => setHeightReference(ref));
 
     const input = document.createElement('input');
-    input.type = 'number';
-    input.step = 'any';
+    input.type = 'text';
+    input.inputMode = 'decimal';
+    input.autocomplete = 'off';
     input.className = 'height-input mono';
     if (ref !== 'NAP') input.setAttribute('readonly', 'readonly');
-    input.addEventListener('blur', () => { if (row.dataset.ref === state.heightRef) onCoordChange(); });
+    input.addEventListener('blur', () => { if (row.dataset.ref === state.heightRef) recomputeHeightsLocally(); });
     input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && row.dataset.ref === state.heightRef) onCoordChange();
+      if (e.key === 'Enter' && row.dataset.ref === state.heightRef) recomputeHeightsLocally();
     });
+
+    const wrap = document.createElement('div');
+    wrap.className = 'height-input-wrap';
+    wrap.appendChild(input);
+
+    const stepper = document.createElement('div');
+    stepper.className = 'stepper';
+    const upBtn = document.createElement('button');
+    upBtn.type = 'button';
+    upBtn.className = 'stepper-btn';
+    upBtn.tabIndex = -1;
+    upBtn.innerHTML = '&#9650;';
+    const downBtn = document.createElement('button');
+    downBtn.type = 'button';
+    downBtn.className = 'stepper-btn';
+    downBtn.tabIndex = -1;
+    downBtn.innerHTML = '&#9660;';
+    const stepHeight = (dir) => {
+      const current = parseFlexibleFloat(input.value);
+      const base = Number.isNaN(current) ? 0 : current;
+      input.value = (base + dir * 0.1).toFixed(3);
+      if (row.dataset.ref === state.heightRef) recomputeHeightsLocally();
+    };
+    upBtn.addEventListener('click', () => stepHeight(1));
+    downBtn.addEventListener('click', () => stepHeight(-1));
+    stepper.appendChild(upBtn);
+    stepper.appendChild(downBtn);
+    wrap.appendChild(stepper);
 
     row.appendChild(radio);
     row.appendChild(labelEl);
-    row.appendChild(input);
+    row.appendChild(wrap);
     if (ref === 'NAP') row.classList.add('active');
     container.appendChild(row);
   });
@@ -583,6 +1630,7 @@ async function useDeviceLocation() {
 function setHeaderCollapsed(collapsed) {
   document.getElementById('header-panel').classList.toggle('collapsed', collapsed);
   document.getElementById('header-tab').classList.toggle('visible', collapsed);
+  setTimeout(resyncView, 280);
 }
 
 function toggleHeader() {
@@ -595,10 +1643,11 @@ function toggleSheet() {
   const btn = document.getElementById('sheet-toggle');
   const expanded = !panel.classList.contains('expanded');
   panel.classList.toggle('expanded', expanded);
-  btn.innerHTML = expanded ? '&#9660; UITKOMST' : '&#9650; UITKOMST';
+  btn.classList.toggle('expanded', expanded);
   // Op mobiel overlapt het inklapbare infopaneel anders de uitgeklapte
   // resultaten; klap het daarom automatisch weg zodra de sheet opengaat.
   if (expanded) setHeaderCollapsed(true);
+  setTimeout(resyncView, 300);
 }
 
 function wireStaticEvents() {
@@ -612,6 +1661,27 @@ function wireStaticEvents() {
   document.getElementById('debug-btn').addEventListener('click', () => {
     document.getElementById('debug-modal').classList.remove('hidden');
   });
+  document.getElementById('history-btn').addEventListener('click', () => {
+    document.getElementById('history-modal').classList.remove('hidden');
+  });
+  document.getElementById('add-history-btn').addEventListener('click', addCurrentToHistory);
+  document.getElementById('lat-raster-toggle').addEventListener('change', (e) => toggleLatRaster(e.target.checked));
+  document.getElementById('contour-toggle').addEventListener('change', (e) => toggleContours(e.target.checked));
+  document.getElementById('lat-opacity-slider').addEventListener('input', (e) => {
+    onLatOpacityChange(parseInt(e.target.value, 10) / 100);
+  });
+  document.getElementById('contour-interval-slider').addEventListener('input', (e) => {
+    let idx = parseInt(e.target.value, 10);
+    const minIdx = minAllowedContourIndex(map ? map.getZoom() : MAP_MIN_ZOOM);
+    if (idx < minIdx) {
+      idx = minIdx;
+      e.target.value = idx;
+    }
+    onContourIntervalChange(CONTOUR_STEPS[idx] !== undefined ? CONTOUR_STEPS[idx] : 0.25);
+  });
+  document.getElementById('color-min-slider').addEventListener('input', onColorRangeChange);
+  document.getElementById('color-max-slider').addEventListener('input', onColorRangeChange);
+
   document.querySelectorAll('.modal').forEach((modal) => {
     modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.add('hidden'); });
     modal.querySelectorAll('.modal-close').forEach((btn) => {
@@ -623,8 +1693,11 @@ function wireStaticEvents() {
   coord1.addEventListener('keydown', (e) => { if (e.key === 'Enter') onCoordChange(); });
   coord2.addEventListener('blur', onCoordChange);
   coord2.addEventListener('keydown', (e) => { if (e.key === 'Enter') onCoordChange(); });
+  wireCoordSteppers();
   srcSelect.addEventListener('change', onSrcSystemChange);
   gpsBtn.addEventListener('click', useDeviceLocation);
+
+  window.addEventListener('resize', debounce(resyncView, 150));
 }
 
 /* ---------------------------------------------------------------- */
@@ -632,9 +1705,22 @@ function wireStaticEvents() {
 /* ---------------------------------------------------------------- */
 
 buildHeightRows();
+buildContourTicks();
 updateCoordLabels();
 wireStaticEvents();
+// Expliciet de gewenste standaardstatus zetten (naast autocomplete="off" op
+// de formuliervelden zelf), zodat browser-formulierherstel na een refresh
+// nooit een laag "aangevinkt maar niet geladen" of een select/invoerpaneel
+// dat niet meer bij elkaar past kan achterlaten.
+document.getElementById('lat-raster-toggle').checked = false;
+document.getElementById('contour-toggle').checked = false;
+srcSelect.value = 'RD';
+state.srcSystem = 'RD';
+updateCoordLabels();
 initMap();
+updateContourAvailability();
+positionCrosshair();
+if (window.innerWidth <= 767) setHeaderCollapsed(true);
 coord1.value = EXAMPLE_RD[0];
 coord2.value = EXAMPLE_RD[1];
 onCoordChange();
