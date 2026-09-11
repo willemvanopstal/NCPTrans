@@ -85,7 +85,7 @@
   .brand-mark{color:var(--accent);font-size:18px;line-height:1;}
   .brand-title{font-weight:700;letter-spacing:0.08em;font-size:15px;}
   .header-layers{display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--panel-border);
-    padding:8px 0;margin:2px 0;}
+    border-bottom:1px solid var(--panel-border);padding:8px 0;margin:2px 0;}
   .header-layers .field-label{margin-bottom:2px;}
   #header-tab{
     position:fixed;top:12px;left:0;z-index:25;display:none;
@@ -303,6 +303,33 @@
 
   .history-row{display:flex;align-items:center;gap:8px;}
 
+  /* --- profielentool --- */
+  #profile-panel{display:none;flex-direction:column;gap:0;}
+  #input-panel.profile-mode #profile-panel{display:flex;}
+  #input-panel.profile-mode #output-panel,
+  #input-panel.profile-mode > .row{display:none;}
+  .profile-header{
+    display:flex;align-items:center;justify-content:space-between;
+    background:rgba(213,103,76,0.14);
+    padding:9px 8px 9px 10px;
+    font-size:11px;font-weight:700;letter-spacing:0.04em;color:var(--text);
+  }
+  #profile-close-btn{
+    background:transparent;border:none;color:var(--text);cursor:pointer;
+    width:26px;height:26px;border-radius:6px;font-size:16px;line-height:1;
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  }
+  #profile-close-btn:hover{color:var(--danger);}
+  #profile-svg{
+    width:100%;height:178px;background:rgba(255,255,255,0.5);cursor:crosshair;
+  }
+  #profile-info{font-size:10px;color:var(--text-dim);text-align:center;margin-top:6px;}
+  .profile-marker-dot{
+    width:22px;height:22px;border-radius:50%;background:var(--accent);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;
+    border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.4);cursor:grab;
+  }
+
   /* --- historietabel --- */
   #history-table{width:100%;border-collapse:collapse;font-size:11px;}
   #history-table th,#history-table td{padding:4px 8px;text-align:right;border-bottom:1px solid var(--panel-border);white-space:nowrap;}
@@ -421,7 +448,7 @@
   <div class="brand-row">
     <div class="brand">
       <span class="brand-mark">&#8982;</span>
-      <span class="brand-title">NCPTrans</span>
+      <span class="brand-title">NCPTRANS</span>
     </div>
     <button id="header-collapse" class="icon-btn" title="Inklappen">&#9664;</button>
   </div>
@@ -464,6 +491,7 @@
     </details>
   </div>
 
+  <button id="profile-btn" class="btn full">PROFIEL</button>
   <button id="about-btn" class="btn full">&#9432;&nbsp; OVER DEZE TOOL</button>
 </div>
 
@@ -493,7 +521,7 @@
 
     <h3>Verwisselingsfout
       <span class="info-badge" tabindex="0"
-        title="De afwijking in meters, als je denkt een (lat, lon) in te geven in ETRS89, maar per ongeluk de Bessel of ED50 ellipsoide gebruikt hebt. De pijl geeft aan in welke richting de echte ETRS89 latlon positie zou liggen.">?</span>
+        title="Wat je ernaast zou zitten (in UTM-meters) als je de coordinaten van dit punt in het verkeerde stelsel zou lezen - bijvoorbeeld Bessel/RD-coordinaten die je per ongeluk als ETRS89 invoert, zonder om te rekenen. ED50/ETRS89 is een benadering (algemene West-Europese verschuiving, geen NL-specifieke fit). Het pijltje wijst telkens naar waar de echte ETRS89-positie ligt.">?</span>
     </h3>
     <div class="kv">
       <span class="kv-label">RD vs ETRS89</span><span class="mono val"><span id="out-mixup-arrow" class="mixup-arrow">&uarr;</span><span id="out-mixup-dist">&mdash;</span></span>
@@ -551,6 +579,15 @@
       </div>
     </label>
     <button id="gps-btn" class="icon-btn" title="Gebruik apparaatlocatie">&#8982;</button>
+  </div>
+
+  <div id="profile-panel">
+    <div class="profile-header">
+      <span>Profiel</span>
+      <button id="profile-close-btn" title="Terug naar invoer">&times;</button>
+    </div>
+    <svg id="profile-svg"></svg>
+    <div id="profile-info" class="slider-value">&mdash;</div>
   </div>
 
 </div>
@@ -694,6 +731,10 @@ let latRasterActive = false;
 let contourActive = false;
 let contourLoading = false;
 
+let profileMode = false;
+let markerA = null;
+let markerB = null;
+
 function fmtUnit(v, d, unit) {
   return (v === null || v === undefined) ? '\u2014' : `${Number(v).toFixed(d)} ${unit}`;
 }
@@ -817,10 +858,14 @@ function initMap() {
 
   historyLayer = L.layerGroup().addTo(map);
 
-  map.on('click', (e) => setPointFromLonLat(e.latlng.lng, e.latlng.lat));
+  map.on('click', (e) => {
+    if (profileMode) return;
+    setPointFromLonLat(e.latlng.lng, e.latlng.lat);
+  });
 
   map.on('moveend', () => {
     if (suppressNextMoveEnd) { suppressNextMoveEnd = false; return; }
+    if (profileMode) return;
     const { x, y } = getFreeCenterPixel();
     const latlng = map.containerPointToLatLng([x, y]);
     setPointFromLonLat(latlng.lng, latlng.lat, { recenter: false });
@@ -829,6 +874,7 @@ function initMap() {
   map.on('moveend zoomend', debounce(() => {
     updateContourAvailability();
     if (contourActive) rebuildLatContours();
+    if (profileMode) updateProfile();
   }, 250));
 
   loadNcpBoundary();
@@ -1228,6 +1274,369 @@ function updateContourAvailability() {
   });
 }
 
+/* ---------------------------------------------------------------- */
+/* Profielentool: LAT-NAP-verschil tussen twee versleepbare punten     */
+/* (A/B), gesampled op hetzelfde raster als de contourlijnen           */
+/* ---------------------------------------------------------------- */
+
+function metersToLatLonOffset(lat, dNorthM, dEastM) {
+  const dLat = dNorthM / 111320;
+  const dLon = dEastM / (111320 * Math.cos(lat * Math.PI / 180) || 1);
+  return [dLat, dLon];
+}
+
+function offsetByBearing(lat, lon, bearingDeg, distanceM) {
+  const bearingRad = (bearingDeg * Math.PI) / 180;
+  const dNorth = Math.cos(bearingRad) * distanceM;
+  const dEast = Math.sin(bearingRad) * distanceM;
+  const [dLat, dLon] = metersToLatLonOffset(lat, dNorth, dEast);
+  return [lat + dLat, lon + dLon];
+}
+
+function haversineMetersClient(lat1, lon1, lat2, lon2) {
+  const r = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * r * Math.asin(Math.sqrt(a));
+}
+
+function sampleLatNapAt(lat, lon) {
+  const g = latGeoraster;
+  if (!g) return null;
+  const colF = (lon - g.xmin) / g.pixelWidth;
+  const rowF = (g.ymax - lat) / g.pixelHeight;
+  const col0 = Math.floor(colF);
+  const row0 = Math.floor(rowF);
+  const col1 = Math.min(g.width - 1, col0 + 1);
+  const row1 = Math.min(g.height - 1, row0 + 1);
+  if (col0 < 0 || row0 < 0 || col0 >= g.width || row0 >= g.height) return null;
+  const fx = colF - col0;
+  const fy = rowF - row0;
+  const data = g.values[0];
+  const nodata = g.noDataValue;
+  const v00 = data[row0][col0];
+  const v10 = data[row0][col1];
+  const v01 = data[row1][col0];
+  const v11 = data[row1][col1];
+  const isNodata = (v) => nodata !== undefined && nodata !== null && v === nodata;
+  if (isNodata(v00) || isNodata(v10) || isNodata(v01) || isNodata(v11)) return null;
+  const top = v00 + (v10 - v00) * fx;
+  const bottom = v01 + (v11 - v01) * fx;
+  return top + (bottom - top) * fy;
+}
+
+function estimateSampleDistance(zoom, lat) {
+  // Ruwe schatting van de grondresolutie (m/pixel) op dit zoomniveau,
+  // zodat de sample-afstand vanzelf fijner wordt bij verder inzoomen.
+  const resolution = (156543.03392 * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, zoom);
+  return Math.max(2, Math.min(100, resolution));
+}
+
+function profileMarkerIcon(letter) {
+  return L.divIcon({
+    className: 'profile-marker',
+    html: `<div class="profile-marker-dot">${letter}</div>`,
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
+  });
+}
+
+async function enterProfileMode() {
+  if (!map) return;
+  try {
+    await ensureLatGeoraster();
+  } catch (err) {
+    showToast('Kon LAT-NAP-raster niet laden voor het profiel: ' + err.message, true);
+    return;
+  }
+
+  let baseLat = 52.9;
+  let baseLon = 4.5;
+  if (state.lastResult && state.lastResult.etrs_lat !== null && state.lastResult.etrs_lat !== undefined) {
+    baseLat = state.lastResult.etrs_lat;
+    baseLon = state.lastResult.etrs_lon;
+  }
+
+  // Willekeurige richting voor de default-lijn (25 km totaal, dus 12,5 km
+  // aan elke kant). Om A wiskundig gegarandeerd linksonder (west+zuid) van
+  // B te laten liggen, trekken we de richting voor A uit het zuidwest-
+  // kwadrant (180-270 gr.); B ligt dan automatisch in het exact
+  // tegenoverliggende noordoost-kwadrant (0-90 gr.), wat voor elke trekking
+  // A.lat<B.lat EN A.lon<B.lon garandeert (een simpele "kleinste som"-keuze
+  // bleek dat bij bijna-oost-westlijnen soms niet te geven).
+  const bearingA = 180 + Math.random() * 90;
+  const pointA = offsetByBearing(baseLat, baseLon, bearingA, 12500);
+  const pointB = offsetByBearing(baseLat, baseLon, bearingA + 180, 12500);
+
+  if (markerA) map.removeLayer(markerA);
+  if (markerB) map.removeLayer(markerB);
+
+  // A staat straks ook links in de grafiek.
+  markerA = L.marker(pointA, { draggable: true, icon: profileMarkerIcon('A') }).addTo(map);
+  markerB = L.marker(pointB, { draggable: true, icon: profileMarkerIcon('B') }).addTo(map);
+  markerA.on('drag dragend', updateProfile);
+  markerB.on('drag dragend', updateProfile);
+
+  profileMode = true;
+  document.getElementById('input-panel').classList.add('profile-mode');
+  // De gewone puntselectie (kaartklik/pannen) en het kruis staan even
+  // "uit" - de kaart wordt nu gebruikt om de A/B-punten te verslepen.
+  document.getElementById('crosshair-center').style.display = 'none';
+  document.getElementById('sep-badge-wrap').style.display = 'none';
+  updateProfile();
+  setTimeout(resyncView, 50);
+}
+
+function exitProfileMode() {
+  profileMode = false;
+  document.getElementById('input-panel').classList.remove('profile-mode');
+  if (markerA) { map.removeLayer(markerA); markerA = null; }
+  if (markerB) { map.removeLayer(markerB); markerB = null; }
+  if (profileLine) { map.removeLayer(profileLine); profileLine = null; }
+  if (hoverMapMarker) { map.removeLayer(hoverMapMarker); hoverMapMarker = null; }
+  document.getElementById('crosshair-center').style.display = '';
+  document.getElementById('sep-badge-wrap').style.display = '';
+  setTimeout(resyncView, 50);
+}
+
+function computeProfileData() {
+  if (!markerA || !markerB || !latGeoraster || !map) return null;
+  const a = markerA.getLatLng();
+  const b = markerB.getLatLng();
+  const totalDist = haversineMetersClient(a.lat, a.lng, b.lat, b.lng);
+  const midLat = (a.lat + b.lat) / 2;
+  const sampleDist = estimateSampleDistance(map.getZoom(), midLat);
+  let n = Math.ceil(totalDist / sampleDist) + 1;
+  n = Math.max(2, Math.min(300, n));
+
+  const points = [];
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1);
+    const lat = a.lat + (b.lat - a.lat) * t;
+    const lon = a.lng + (b.lng - a.lng) * t;
+    points.push({ dist: totalDist * t, value: sampleLatNapAt(lat, lon), lat, lon });
+  }
+  return { points, totalDist, sampleDist };
+}
+
+let profileChartState = null;
+let profileLine = null;
+let hoverMapMarker = null;
+
+function updateProfileLine() {
+  if (!markerA || !markerB || !map) return;
+  const latlngs = [markerA.getLatLng(), markerB.getLatLng()];
+  if (profileLine) {
+    profileLine.setLatLngs(latlngs);
+  } else {
+    profileLine = L.polyline(latlngs, {
+      color: cssVar('--accent-2', '#D5674C'), weight: 2, dashArray: '5 5', opacity: 0.85,
+    }).addTo(map);
+  }
+}
+
+function renderProfileChart() {
+  const svg = document.getElementById('profile-svg');
+  const info = document.getElementById('profile-info');
+  const data = computeProfileData();
+  profileChartState = null;
+  if (!data) { svg.innerHTML = ''; info.textContent = '\u2014'; return; }
+
+  const { points, totalDist, sampleDist } = data;
+  const valid = points.filter((p) => p.value !== null && p.value !== undefined);
+
+  // Viewbox exact gelijk aan de werkelijk gerenderde pixelgrootte, anders
+  // schaalt de browser (bij een afwijkende breedte/hoogte-verhouding) de
+  // hele tekening - inclusief tekst - niet-uniform uit, wat er vervormd
+  // uitziet.
+  const rect = svg.getBoundingClientRect();
+  const w = Math.max(200, Math.round(rect.width) || 300);
+  const h = Math.max(120, Math.round(rect.height) || 178);
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+
+  if (!valid.length) {
+    svg.innerHTML = `<text x="${w / 2}" y="${h / 2}" text-anchor="middle" font-size="11" fill="var(--text-dim)">Geen data op dit traject</text>`;
+    info.textContent = `Afstand A-B: ${totalDist.toFixed(1)} m`;
+    return;
+  }
+
+  const vMin = Math.min(...valid.map((p) => p.value));
+  const vMax = Math.max(...valid.map((p) => p.value));
+  const vSpan = (vMax - vMin) || 1;
+
+  const padL = 38;
+  const padR = 10;
+  const padT = 10;
+  const padB = 34; // ruimte voor de afstand-ticks (x-as) + de A/B-letters eronder
+  const plotW = w - padL - padR;
+  const plotH = h - padT - padB;
+
+  const xAt = (d) => padL + (totalDist > 0 ? (d / totalDist) * plotW : 0);
+  const yAt = (v) => padT + plotH - ((v - vMin) / vSpan) * plotH;
+
+  let pathD = '';
+  let pathBroken = true; // na een ontbrekend punt moet het volgende geldige punt een nieuw subpad (M) starten, geen doorlopende lijn (L)
+  points.forEach((p) => {
+    if (p.value === null || p.value === undefined) { pathBroken = true; return; }
+    const x = xAt(p.dist).toFixed(1);
+    const y = yAt(p.value).toFixed(1);
+    pathD += (pathBroken ? 'M' : 'L') + x + ',' + y + ' ';
+    pathBroken = false;
+  });
+
+  const parts = [];
+
+  // Banden voor stukken zonder data (bv. buiten het geldigheidsgebied van
+  // het raster), als lichte achtergrondvlakken - vóór de rest getekend
+  // zodat gridlijnen/lijn er gewoon overheen zichtbaar blijven.
+  let gapStartDist = null;
+  for (let i = 0; i < points.length; i++) {
+    const noData = points[i].value === null || points[i].value === undefined;
+    if (noData && gapStartDist === null) gapStartDist = points[i].dist;
+    if (!noData && gapStartDist !== null) {
+      const x0 = xAt(gapStartDist);
+      const x1 = xAt(points[i].dist);
+      parts.push(`<rect x="${x0.toFixed(1)}" y="${padT}" width="${(x1 - x0).toFixed(1)}" height="${plotH}" fill="rgba(213,103,76,0.12)"/>`);
+      gapStartDist = null;
+    }
+  }
+  if (gapStartDist !== null) {
+    const x0 = xAt(gapStartDist);
+    const x1 = xAt(points[points.length - 1].dist);
+    parts.push(`<rect x="${x0.toFixed(1)}" y="${padT}" width="${(x1 - x0).toFixed(1)}" height="${plotH}" fill="rgba(213,103,76,0.12)"/>`);
+  }
+
+  const gridLines = 4;
+  for (let i = 0; i < gridLines; i++) {
+    const frac = i / (gridLines - 1);
+    const v = vMax - frac * vSpan;
+    const y = (padT + frac * plotH).toFixed(1);
+    parts.push(`<line x1="${padL}" y1="${y}" x2="${padL + plotW}" y2="${y}" stroke="var(--panel-border)" stroke-width="1" opacity="0.7"/>`);
+    parts.push(`<text x="${padL - 4}" y="${(parseFloat(y) + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--text-dim)">${v.toFixed(2)}</text>`);
+  }
+
+  parts.push(`<line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + plotH}" stroke="var(--panel-border)" stroke-width="1"/>`);
+  parts.push(`<path d="${pathD}" fill="none" stroke="var(--accent)" stroke-width="2"/>`);
+
+  const xTicks = [0, 0.5, 1];
+  xTicks.forEach((frac) => {
+    const d = totalDist * frac;
+    const x = (padL + frac * plotW).toFixed(1);
+    const anchor = frac === 0 ? 'start' : (frac === 1 ? 'end' : 'middle');
+    parts.push(`<text x="${x}" y="${(padT + plotH + 12).toFixed(1)}" text-anchor="${anchor}" font-size="9" fill="var(--text-dim)">${d.toFixed(0)} m</text>`);
+  });
+
+  parts.push(`<text x="${padL}" y="${h - 6}" font-size="10" font-weight="700" fill="var(--accent)">A</text>`);
+  parts.push(`<text x="${padL + plotW}" y="${h - 6}" text-anchor="end" font-size="10" font-weight="700" fill="var(--accent)">B</text>`);
+
+  // Verborgen hover-indicator (bolletje + waarde-label), bijgewerkt via
+  // onProfileChartHover() zonder de rest van de tekening opnieuw te tekenen.
+  parts.push('<g id="profile-hover-group" style="display:none;">');
+  parts.push(`<line id="profile-hover-line" x1="0" y1="${padT}" x2="0" y2="${padT + plotH}" stroke="var(--text-dim)" stroke-width="1" stroke-dasharray="2 2"/>`);
+  parts.push('<rect id="profile-hover-bg" fill="rgba(255,255,255,0.92)" stroke="var(--panel-border)" rx="3"></rect>');
+  parts.push('<text id="profile-hover-text" font-size="10" font-weight="700" fill="var(--text)"></text>');
+  parts.push(`<circle id="profile-hover-dot" r="4" fill="var(--accent)" stroke="#fff" stroke-width="1.5"/>`);
+  parts.push('</g>');
+
+  svg.innerHTML = parts.join('');
+
+  profileChartState = { points, totalDist, vMin, vMax, vSpan, padL, padT, plotW, plotH, w, h };
+
+  info.textContent = `Afstand A-B: ${totalDist.toFixed(1)} m  \u2022  sample: ${sampleDist.toFixed(1)} m  \u2022  ${points.length} punten`;
+}
+
+function updateHoverMarker(point, xPixel, yPixel) {
+  const group = document.getElementById('profile-hover-group');
+  if (!group) return;
+  if (!point || point.value === null || point.value === undefined) {
+    group.style.display = 'none';
+    if (hoverMapMarker) map.removeLayer(hoverMapMarker);
+    hoverMapMarker = null;
+    return;
+  }
+  group.style.display = '';
+
+  if (map && point.lat !== undefined && point.lon !== undefined) {
+    if (!hoverMapMarker) {
+      hoverMapMarker = L.circleMarker([point.lat, point.lon], {
+        radius: 6, weight: 2, color: '#fff', fillColor: cssVar('--accent-2', '#D5674C'), fillOpacity: 1,
+      }).addTo(map);
+    } else {
+      hoverMapMarker.setLatLng([point.lat, point.lon]);
+    }
+  }
+
+  const dot = document.getElementById('profile-hover-dot');
+  const line = document.getElementById('profile-hover-line');
+  const bg = document.getElementById('profile-hover-bg');
+  const text = document.getElementById('profile-hover-text');
+
+  dot.setAttribute('cx', xPixel.toFixed(1));
+  dot.setAttribute('cy', yPixel.toFixed(1));
+  line.setAttribute('x1', xPixel.toFixed(1));
+  line.setAttribute('x2', xPixel.toFixed(1));
+
+  text.textContent = `${point.value.toFixed(3)} m`;
+  let anchor = 'start';
+  let textX = xPixel + 8;
+  text.setAttribute('text-anchor', anchor);
+  text.setAttribute('x', textX.toFixed(1));
+  text.setAttribute('y', (yPixel - 10).toFixed(1));
+
+  let bbox;
+  try { bbox = text.getBBox(); } catch (err) { bbox = null; }
+  if (bbox && profileChartState && bbox.x + bbox.width > profileChartState.w - 4) {
+    anchor = 'end';
+    textX = xPixel - 8;
+    text.setAttribute('text-anchor', anchor);
+    text.setAttribute('x', textX.toFixed(1));
+    try { bbox = text.getBBox(); } catch (err) { /* negeren */ }
+  }
+  if (bbox) {
+    bg.setAttribute('x', (bbox.x - 4).toFixed(1));
+    bg.setAttribute('y', (bbox.y - 3).toFixed(1));
+    bg.setAttribute('width', (bbox.width + 8).toFixed(1));
+    bg.setAttribute('height', (bbox.height + 6).toFixed(1));
+  }
+}
+
+function onProfileChartHover(clientX) {
+  if (!profileChartState) return;
+  const svg = document.getElementById('profile-svg');
+  const rect = svg.getBoundingClientRect();
+  if (!rect.width) return;
+
+  const scaleX = profileChartState.w / rect.width;
+  const px = (clientX - rect.left) * scaleX;
+  const frac = Math.max(0, Math.min(1, (px - profileChartState.padL) / profileChartState.plotW));
+  const dist = frac * profileChartState.totalDist;
+
+  let nearest = null;
+  let bestDiff = Infinity;
+  profileChartState.points.forEach((p) => {
+    const diff = Math.abs(p.dist - dist);
+    if (diff < bestDiff) { bestDiff = diff; nearest = p; }
+  });
+  if (!nearest || nearest.value === null || nearest.value === undefined) {
+    updateHoverMarker(null);
+    return;
+  }
+
+  const xPixel = profileChartState.padL + (profileChartState.totalDist > 0
+    ? (nearest.dist / profileChartState.totalDist) * profileChartState.plotW : 0);
+  const yPixel = profileChartState.padT + profileChartState.plotH
+    - ((nearest.value - profileChartState.vMin) / profileChartState.vSpan) * profileChartState.plotH;
+  updateHoverMarker(nearest, xPixel, yPixel);
+}
+
+function updateProfile() {
+  if (!profileMode) return;
+  updateProfileLine();
+  renderProfileChart();
+}
+
 function drawFallbackBounds() {
   ncpBoundaryLayer = L.rectangle([[50, 2], [56, 8]], { color: '#38bdf8', weight: 1, fill: false, dashArray: '4' }).addTo(map);
 }
@@ -1278,10 +1687,18 @@ async function callTransform(x, y, srcXy) {
 }
 
 function setPointFromLonLat(lon, lat, opts) {
+  opts = opts || {};
+  // Meteen naar het nieuwe punt pannen - dat weten we al (kaartklik/GPS),
+  // ongeacht of de server al heeft geantwoord. De spinner (die pas start
+  // zodra callTransform() de aanvraag verstuurt) komt er dus na, niet voor.
+  if (opts.recenter !== false && map) {
+    const { x, y } = positionCrosshair();
+    centerMapAtPixel(lat, lon, x, y);
+  }
   callTransform(lon, lat, 'ETRS89').then((result) => {
     if (!result) return;
     applyResultToInputs(result);
-    renderAll(result, opts);
+    renderAll(result, { ...opts, recenter: false });
   });
 }
 
@@ -1655,6 +2072,21 @@ function wireStaticEvents() {
   document.getElementById('header-tab').addEventListener('click', toggleHeader);
   document.getElementById('sheet-toggle').addEventListener('click', toggleSheet);
 
+  document.getElementById('profile-btn').addEventListener('click', () => {
+    if (profileMode) exitProfileMode();
+    else enterProfileMode();
+  });
+  document.getElementById('profile-close-btn').addEventListener('click', exitProfileMode);
+  const profileSvg = document.getElementById('profile-svg');
+  profileSvg.addEventListener('mousemove', (e) => onProfileChartHover(e.clientX));
+  profileSvg.addEventListener('mouseleave', () => updateHoverMarker(null));
+  profileSvg.addEventListener('touchmove', (e) => {
+    if (e.touches && e.touches[0]) {
+      onProfileChartHover(e.touches[0].clientX);
+      e.preventDefault();
+    }
+  }, { passive: false });
+  profileSvg.addEventListener('touchend', () => updateHoverMarker(null));
   document.getElementById('about-btn').addEventListener('click', () => {
     document.getElementById('about-modal').classList.remove('hidden');
   });
