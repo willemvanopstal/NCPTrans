@@ -9,3 +9,5 @@ NLLAT2018.txt
 nlgeo2018.txt
 rdcorr2018.txt
 rdnaptrans_grids.sqlite
+
+.ncp_eez_cache.geojson

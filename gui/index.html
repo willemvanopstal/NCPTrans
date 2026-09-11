@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>NCPTrans</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#f8ece3;
+    --panel-bg:rgba(249,236,227,0.95);
+    --panel-border:#5b300029;
+    --text:#1e2d33;
+    --text-dim:60768;
+    --accent:#D5674C;
+    --accent-2:#D5674C;
+    --danger:#f87171;
+    --mono:'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --radius:12px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--text);
+    font-family:var(--mono);overflow:hidden;-webkit-tap-highlight-color:transparent;}
+  #map{position:fixed;inset:0;z-index:0;background:#0a0f1a;}
+  .leaflet-container{background:#0a0f1a;font-family:var(--mono);}
+
+  /* --- schietroos + separatie-badge, vast in het midden van de kaart --- */
+  #crosshair{
+    position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+    z-index:15;pointer-events:none;display:flex;align-items:center;gap:8px;
+  }
+  #crosshair svg{filter:drop-shadow(0 1px 3px rgba(0,0,0,0.7));}
+  #sep-badge{
+    background:#fff;border:1px solid var(--accent-2);color:var(--accent-2);
+    font-family:var(--mono);font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;
+    white-space:nowrap;letter-spacing:0.02em;
+  }
+  #sep-badge.hidden{display:none;}
+
+  /* --- gedeelde paneelstijl --- */
+  .panel{
+    background:var(--panel-bg);border:1px solid var(--panel-border);border-radius:var(--radius);
+    backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+    box-shadow:0 8px 30px rgba(0,0,0,0.45);
+  }
+
+  /* --- header (inklapbaar) --- */
+  #header-panel{
+    position:fixed;top:12px;left:12px;z-index:25;width:220px;padding:12px;
+    display:flex;flex-direction:column;gap:8px;
+    transition:transform .25s ease, opacity .25s ease;
+  }
+  #header-panel.collapsed{transform:translateX(-140%);opacity:0;pointer-events:none;}
+  .brand-row{display:flex;align-items:center;justify-content:space-between;}
+  .brand{display:flex;align-items:center;gap:8px;}
+  .brand-mark{color:var(--accent);font-size:18px;line-height:1;}
+  .brand-title{font-weight:700;letter-spacing:0.08em;font-size:15px;}
+  #header-tab{
+    position:fixed;top:12px;left:0;z-index:25;display:none;
+    width:28px;height:64px;align-items:center;justify-content:center;
+    background:var(--panel-bg);border:1px solid var(--panel-border);border-left:none;
+    border-radius:0 10px 10px 0;cursor:pointer;color:var(--accent);
+    box-shadow:0 4px 16px rgba(0,0,0,0.35);
+  }
+  #header-tab.visible{display:flex;}
+  #header-tab:hover{color:#fff;border-color:var(--accent);}
+
+  .icon-btn{
+    background:transparent;border:1px solid var(--panel-border);color:var(--text-dim);
+    border-radius:8px;width:30px;height:30px;display:flex;align-items:center;justify-content:center;
+    cursor:pointer;font-family:var(--mono);font-size:14px;
+  }
+  .icon-btn:hover{color:var(--accent);border-color:var(--accent);}
+
+  .btn{
+    background:transparent;border:1px solid var(--panel-border);color:var(--text);
+    border-radius:8px;padding:8px 10px;cursor:pointer;font-family:var(--mono);
+    font-size:12px;letter-spacing:0.06em;font-weight:600;
+  }
+  .btn:hover{border-color:var(--accent);color:var(--accent);}
+  .btn.full{width:100%;}
+  .btn.ghost{color:var(--text-dim);}
+
+  /* --- invoerpaneel (bevat ook het geneste uitvoerpaneel, zie CSS-trucs onder) ---
+     LET OP: geen backdrop-filter/transform/filter/will-change op dit element!
+     Zo'n property op een voorouder verandert het "containing block" van
+     position:fixed-nakomelingen (zoals #output-panel hieronder), waardoor die
+     niet meer los van de pagina maar relatief aan dít paneel zou positioneren. */
+  #input-panel{
+    position:fixed;left:12px;bottom:12px;z-index:20;width:300px;padding:12px;
+    display:flex;flex-direction:column;gap:10px;
+    backdrop-filter:none;-webkit-backdrop-filter:none;
+  }
+  .field{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0;}
+  .field-label{font-size:10px;letter-spacing:0.08em;color:var(--text-dim);text-transform:uppercase;}
+  select, input[type=number]{
+    font-family:var(--mono);background:#fff8f3;border:1px solid var(--panel-border);color:var(--text);
+    border-radius:8px;padding:7px 8px;font-size:13px;width:100%;
+  }
+  select:focus, input[type=number]:focus{outline:none;border-color:var(--accent);}
+  .row{display:flex;gap:8px;align-items:flex-end;width:100%;}
+  #sheet-toggle{display:none;}
+
+  /* --- uitvoerpaneel --- */
+  #output-panel{
+    display:flex;flex-direction:column;gap:4px;
+  }
+  #output-panel h2{
+    margin:0 0 2px 0;font-size:13px;letter-spacing:0.1em;color:var(--text);
+  }
+  #output-panel h3{
+    margin:10px 0 2px 0;font-size:10px;letter-spacing:0.1em;color:var(--accent);
+    text-transform:uppercase;border-bottom:1px solid var(--panel-border);padding-bottom:3px;
+  }
+  #output-panel h3 small{color:var(--text-dim);font-weight:400;letter-spacing:0;text-transform:none;}
+  .kv{display:grid;grid-template-columns:1fr auto;gap:2px 8px;}
+  .kv span:nth-child(odd){font-size:11px;color:var(--text-dim);align-self:center;}
+  .val{font-size:13px;font-weight:600;text-align:right;}
+
+  .height-row{display:flex;align-items:center;gap:8px;padding:3px 0;}
+  .radio{width:14px;color:var(--text-dim);cursor:pointer;user-select:none;}
+  .height-label{flex:1;font-size:12px;color:var(--text-dim);cursor:pointer;}
+  .height-input{
+    width:96px;text-align:right;font-family:var(--mono);font-size:13px;
+    background:transparent;border:1px solid transparent;border-radius:6px;
+    padding:3px 6px;color:var(--text-dim);
+	max-width:10em; !important
+  }
+  .height-row.active .radio{color:var(--accent-2);}
+  .height-row.active .height-label{color:var(--text);}
+  .height-row.active .height-input{
+    border-color:var(--accent-2);color:var(--text);background:rgba(251,191,36,0.08);
+  }
+  .height-input[readonly]{pointer-events:none;}
+
+  #output-panel .divider{border-top:1px solid var(--panel-border);margin:10px 0 4px 0;}
+
+  /* --- desktop: uitvoerpaneel als eigen vast paneel rechts ---
+     Belangrijk: backdrop-filter staat hier op #output-panel ZELF (het element
+     dat position:fixed krijgt), niet op een voorouder - dat is altijd veilig
+     en verandert niets aan hoe #output-panel zelf gepositioneerd wordt. */
+  @media (min-width:768px){
+    #output-panel{
+      position:fixed;right:12px;top:12px;bottom:12px;width:320px;z-index:20;
+      padding:14px;overflow-y:auto;
+      background:var(--panel-bg);border:1px solid var(--panel-border);border-radius:var(--radius);
+      backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+      box-shadow:0 8px 30px rgba(0,0,0,0.45);
+    }
+  }
+
+  /* --- mobiel: uitvoer wordt integraal onderdeel van het invoer-bodemvenster --- */
+  @media (max-width:767px){
+    #input-panel{
+      left:0;right:0;bottom:0;width:auto;max-width:360px;margin:0 auto;
+      border-radius:16px 16px 0 0;
+      justify-content:flex-end;overflow:hidden;
+      max-height:172px;transition:max-height .28s ease;
+      padding-bottom:calc(12px + env(safe-area-inset-bottom));
+    }
+    #input-panel.expanded{max-height:86vh;}
+    #output-panel{overflow-y:auto;max-height:60vh;padding-right:2px;}
+    #sheet-toggle{display:block;order:0;}
+  }
+
+  /* --- modals --- */
+  .modal{
+    position:fixed;inset:0;z-index:50;background:rgba(0,0,0,0.55);
+    display:flex;align-items:center;justify-content:center;padding:16px;
+  }
+  .modal.hidden{display:none;}
+  .modal-box{
+    max-width:480px;width:100%;max-height:80vh;overflow-y:auto;padding:18px;
+  }
+  .modal-box h2{margin-top:0;font-size:15px;letter-spacing:0.06em;}
+  .modal-box p{font-size:12.5px;line-height:1.5;color:var(--text-dim);}
+  #debug-content{
+    font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-all;
+    max-height:55vh;overflow-y:auto;margin:0;color:var(--text);
+  }
+
+  /* --- toast --- */
+  #toast{
+    position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:60;
+    background:#1f2937;border:1px solid var(--danger);color:#fecaca;
+    padding:8px 14px;border-radius:8px;font-size:12px;max-width:90vw;
+  }
+  #toast.hidden{display:none;}
+
+  .mono{font-family:var(--mono);}
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="crosshair">
+  <svg width="44" height="44" viewBox="0 0 44 44">
+    <line x1="22" y1="1" x2="22" y2="11" stroke="#ef4444" stroke-width="2.5"/>
+    <line x1="22" y1="33" x2="22" y2="43" stroke="#ef4444" stroke-width="2.5"/>
+    <line x1="1" y1="22" x2="11" y2="22" stroke="#ef4444" stroke-width="2.5"/>
+    <line x1="33" y1="22" x2="43" y2="22" stroke="#ef4444" stroke-width="2.5"/>
+    <circle cx="22" cy="22" r="9" fill="none" stroke="#ef4444" stroke-width="2.5"/>
+    <circle cx="22" cy="22" r="2.2" fill="#ef4444"/>
+  </svg>
+  <span id="sep-badge" class="hidden"></span>
+</div>
+
+<div id="header-tab" title="Toon paneel">&#9654;</div>
+
+<div id="header-panel" class="panel">
+  <div class="brand-row">
+    <div class="brand">
+      <span class="brand-mark">&#8982;</span>
+      <span class="brand-title">NCPTRANS</span>
+    </div>
+    <button id="header-collapse" class="icon-btn" title="Inklappen">&#9664;</button>
+  </div>
+  <button id="about-btn" class="btn full">&#9432;&nbsp; OVER DEZE TOOL</button>
+</div>
+
+<div id="input-panel" class="panel">
+
+  <section id="output-panel">
+    <h3>Horizontaal</h3>
+    <div class="kv">
+      <span>X (RD)</span><span id="out-rd-x" class="mono val">&mdash;</span>
+      <span>Y (RD)</span><span id="out-rd-y" class="mono val">&mdash;</span>
+      <span>LON (ETRS89)</span><span id="out-lon" class="mono val">&mdash;</span>
+      <span>LAT (ETRS89)</span><span id="out-lat" class="mono val">&mdash;</span>
+    </div>
+
+    <h3>Separaties</h3>
+    <div class="kv">
+      <span>Geoid &minus; ellips.</span><span id="out-sep-geoid" class="mono val">&mdash;</span>
+      <span>LAT &minus; ellips.</span><span id="out-sep-lat" class="mono val">&mdash;</span>
+      <span>NAP &minus; LAT</span><span id="out-sep-naplat" class="mono val">&mdash;</span>
+    </div>
+
+    <h3>Hoogtes <small>&mdash; klik om referentie te kiezen</small></h3>
+    <div id="height-rows"></div>
+
+    <div class="divider"></div>
+    <button id="debug-btn" class="btn full ghost">&lt;/&gt; DEBUG INFO</button>
+  </section>
+
+  <button id="sheet-toggle" class="btn full">&#9650; UITKOMST</button>
+
+  <div class="row">
+    <label class="field">
+      <span class="field-label">Coordinatensysteem</span>
+      <select id="src-select">
+        <option value="RD">RD (Rijksdriehoek)</option>
+        <option value="ETRS89">ETRS89 (lon/lat)</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="row">
+    <label class="field">
+      <span class="field-label" id="coord1-label">X (RD), m</span>
+      <input id="coord1" type="number" step="any" />
+    </label>
+    <label class="field">
+      <span class="field-label" id="coord2-label">Y (RD), m</span>
+      <input id="coord2" type="number" step="any" />
+    </label>
+    <button id="gps-btn" class="icon-btn" title="Gebruik apparaatlocatie" style="align-self:stretch;height:auto;">&#8982;</button>
+  </div>
+
+</div>
+
+<div id="about-modal" class="modal hidden">
+  <div class="modal-box panel">
+    <h2>OVER NCPTRANS</h2>
+    <p>
+      Coordinatentransformaties tussen RD, ETRS89, NAP, LAT en ellipsoidische hoogte
+      op het Nederlands Continentaal Plat, op basis van <code>NCPTrans.py</code>
+      (RDNAPTRANS2018-methodiek).
+    </p>
+    <p>
+      Deze software is <strong>niet gevalideerd</strong> als officiele RDNAPTRANS2018-implementatie.
+      Gebruik de resultaten niet zonder controle voor kritische of officiele doeleinden.
+    </p>
+    <p>
+      Kaartlagen: basiskaart &copy; VesselFinder, vaarwatersymbolen &copy; OpenSeaMap.
+      De NCP/EEZ-grens komt van Marine Regions / VLIZ (MRGID 5668).
+    </p>
+    <button class="btn full modal-close">SLUITEN</button>
+  </div>
+</div>
+
+<div id="debug-modal" class="modal hidden">
+  <div class="modal-box panel">
+    <h2>DEBUG: TRANSFORMER-OBJECT</h2>
+    <pre id="debug-content" class="mono">(nog geen berekening uitgevoerd)</pre>
+    <button class="btn full modal-close" style="margin-top:10px;">SLUITEN</button>
+  </div>
+</div>
+
+<div id="toast" class="hidden"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+'use strict';
+
+const XY_LABELS = {
+  RD: ['X (RD), m', 'Y (RD), m'],
+  ETRS89: ['LON, \u00b0', 'LAT, \u00b0'],
+};
+const XY_PLACEHOLDERS = {
+  RD: ['108360.7859', '415757.2741'],
+  ETRS89: ['3.976206', '52.011555'],
+};
+const HEIGHT_REFS = [
+  ['NAP', 'NAP (NLGEO2018)'],
+  ['LAT', 'LAT (NLLAT2018)'],
+  ['ETRS89', 'Ellipsoidisch (ETRS89)'],
+];
+const EXAMPLE_RD = [108360.7859, 415757.2741];
+
+const state = {
+  srcSystem: 'RD',
+  heightRef: 'NAP',
+  lastResult: null,
+};
+
+const coord1 = document.getElementById('coord1');
+const coord2 = document.getElementById('coord2');
+const srcSelect = document.getElementById('src-select');
+const gpsBtn = document.getElementById('gps-btn');
+
+let map = null;
+let suppressNextMoveEnd = false;
+
+function fmtUnit(v, d, unit) {
+  return (v === null || v === undefined) ? '\u2014' : `${Number(v).toFixed(d)} ${unit}`;
+}
+function fmtNum(v, d) {
+  return (v === null || v === undefined) ? '' : Number(v).toFixed(d);
+}
+
+function showToast(msg, isError) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.remove('hidden');
+  t.style.borderColor = isError ? 'var(--danger)' : 'var(--accent)';
+  clearTimeout(showToast._timer);
+  showToast._timer = setTimeout(() => t.classList.add('hidden'), 5000);
+}
+
+/* ---------------------------------------------------------------- */
+/* Kaart                                                              */
+/* ---------------------------------------------------------------- */
+
+function initMap() {
+  map = L.map('map', { zoomControl: false, attributionControl: true }).setView([52.9, 4.5], 8);
+
+  L.tileLayer('https://map.vesselfinder.net/simple/{z}/{x}/{y}.png', {
+    maxZoom: 18,
+    attribution: '&copy; VesselFinder',
+  }).addTo(map);
+
+  L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
+    maxZoom: 18,
+    attribution: '&copy; OpenSeaMap contributors',
+  }).addTo(map);
+
+  map.on('click', (e) => setPointFromLonLat(e.latlng.lng, e.latlng.lat));
+
+  map.on('moveend', () => {
+    if (suppressNextMoveEnd) { suppressNextMoveEnd = false; return; }
+    const c = map.getCenter();
+    setPointFromLonLat(c.lng, c.lat, { recenter: false });
+  });
+
+  loadNcpBoundary();
+}
+
+function drawFallbackBounds() {
+  L.rectangle([[50, 2], [56, 8]], { color: '#38bdf8', weight: 1, fill: false, dashArray: '4' }).addTo(map);
+}
+
+async function loadNcpBoundary() {
+  try {
+    const resp = await fetch('/api/ncp-boundary');
+    const data = await resp.json();
+    if (data && data.features && data.features.length) {
+      L.geoJSON(data, { style: { color: '#f87171', weight: 2, fill: false, dashArray: '6 4' } }).addTo(map);
+      return;
+    }
+  } catch (err) { /* val terug */ }
+  drawFallbackBounds();
+}
+
+/* ---------------------------------------------------------------- */
+/* Backend-aanroep                                                    */
+/* ---------------------------------------------------------------- */
+
+async function callTransform(x, y, srcXy) {
+  const ref = state.heightRef;
+  const hInput = document.querySelector(`.height-row[data-ref="${ref}"] .height-input`);
+  const raw = hInput ? hInput.value : '';
+  const h = raw !== '' && raw !== null ? parseFloat(raw) : null;
+
+  const body = { x, y, src_xy: srcXy, h, src_h: h !== null ? ref : null };
+
+  try {
+    const resp = await fetch('/api/transform', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      showToast(data.error, true);
+      return null;
+    }
+    return data;
+  } catch (err) {
+    showToast('Kan geen verbinding maken met de NCPTrans-server.', true);
+    return null;
+  }
+}
+
+function setPointFromLonLat(lon, lat, opts) {
+  callTransform(lon, lat, 'ETRS89').then((result) => {
+    if (!result) return;
+    applyResultToInputs(result);
+    renderAll(result, opts);
+  });
+}
+
+function applyResultToInputs(result) {
+  if (state.srcSystem === 'RD') {
+    coord1.value = fmtNum(result.rd_x, 1);
+    coord2.value = fmtNum(result.rd_y, 1);
+  } else {
+    coord1.value = fmtNum(result.etrs_lon, 6);
+    coord2.value = fmtNum(result.etrs_lat, 6);
+  }
+}
+
+function renderAll(result, opts) {
+  opts = opts || {};
+  state.lastResult = result;
+
+  document.getElementById('out-rd-x').textContent = fmtUnit(result.rd_x, 1, 'm');
+  document.getElementById('out-rd-y').textContent = fmtUnit(result.rd_y, 1, 'm');
+  document.getElementById('out-lon').textContent = fmtUnit(result.etrs_lon, 6, '\u00b0');
+  document.getElementById('out-lat').textContent = fmtUnit(result.etrs_lat, 6, '\u00b0');
+
+  document.getElementById('out-sep-geoid').textContent = fmtUnit(result.geoid_ellipsoid_separation, 3, 'm');
+  document.getElementById('out-sep-lat').textContent = fmtUnit(result.lat_ellipsoid_separation, 3, 'm');
+  document.getElementById('out-sep-naplat').textContent = fmtUnit(result.geoid_lat_separation, 3, 'm');
+
+  const badge = document.getElementById('sep-badge');
+  if (result.geoid_lat_separation !== null && result.geoid_lat_separation !== undefined) {
+    badge.textContent = fmtUnit(result.geoid_lat_separation, 3, 'm');
+    badge.classList.remove('hidden');
+  } else {
+    badge.classList.add('hidden');
+  }
+
+  const heightValues = { NAP: result.nap_height, LAT: result.lat_height, ETRS89: result.ellipsoidal_height };
+  document.querySelectorAll('.height-row').forEach((row) => {
+    const ref = row.dataset.ref;
+    if (ref !== state.heightRef) {
+      row.querySelector('.height-input').value = fmtNum(heightValues[ref], 3);
+    }
+  });
+
+  renderDebug(result.debug || {});
+
+  if (opts.recenter !== false && result.etrs_lat !== null && result.etrs_lon !== null && map) {
+    suppressNextMoveEnd = true;
+    map.setView([result.etrs_lat, result.etrs_lon], map.getZoom());
+  }
+}
+
+function renderDebug(debugObj) {
+  const lines = Object.keys(debugObj).sort().map((k) => `${k} = ${debugObj[k]}`);
+  document.getElementById('debug-content').textContent = lines.length ? lines.join('\n') : '(leeg)';
+}
+
+/* ---------------------------------------------------------------- */
+/* Invoer-events                                                      */
+/* ---------------------------------------------------------------- */
+
+function onCoordChange() {
+  const x = parseFloat(coord1.value);
+  const y = parseFloat(coord2.value);
+  if (Number.isNaN(x) || Number.isNaN(y)) return;
+  callTransform(x, y, state.srcSystem).then((result) => {
+    if (!result) return;
+    renderAll(result);
+  });
+}
+
+function updateCoordLabels() {
+  const [l1, l2] = XY_LABELS[state.srcSystem];
+  const [p1, p2] = XY_PLACEHOLDERS[state.srcSystem];
+  document.getElementById('coord1-label').textContent = l1;
+  document.getElementById('coord2-label').textContent = l2;
+  coord1.placeholder = p1;
+  coord2.placeholder = p2;
+}
+
+function onSrcSystemChange() {
+  state.srcSystem = srcSelect.value;
+  updateCoordLabels();
+  if (state.lastResult) applyResultToInputs(state.lastResult);
+  onCoordChange();
+}
+
+function setHeightReference(ref) {
+  state.heightRef = ref;
+  document.querySelectorAll('.height-row').forEach((row) => {
+    const active = row.dataset.ref === ref;
+    row.classList.toggle('active', active);
+    row.querySelector('.radio').textContent = active ? '\u25CF' : '\u25CB';
+    const input = row.querySelector('.height-input');
+    if (active) input.removeAttribute('readonly');
+    else input.setAttribute('readonly', 'readonly');
+  });
+  onCoordChange();
+}
+
+function buildHeightRows() {
+  const container = document.getElementById('height-rows');
+  HEIGHT_REFS.forEach(([ref, label]) => {
+    const row = document.createElement('div');
+    row.className = 'height-row';
+    row.dataset.ref = ref;
+
+    const radio = document.createElement('span');
+    radio.className = 'radio';
+    radio.textContent = ref === 'NAP' ? '\u25CF' : '\u25CB';
+    radio.addEventListener('click', () => setHeightReference(ref));
+
+    const labelEl = document.createElement('span');
+    labelEl.className = 'height-label';
+    labelEl.textContent = label;
+    labelEl.addEventListener('click', () => setHeightReference(ref));
+
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.step = 'any';
+    input.className = 'height-input mono';
+    if (ref !== 'NAP') input.setAttribute('readonly', 'readonly');
+    input.addEventListener('blur', () => { if (row.dataset.ref === state.heightRef) onCoordChange(); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && row.dataset.ref === state.heightRef) onCoordChange();
+    });
+
+    row.appendChild(radio);
+    row.appendChild(labelEl);
+    row.appendChild(input);
+    if (ref === 'NAP') row.classList.add('active');
+    container.appendChild(row);
+  });
+  document.querySelector('.height-row[data-ref="NAP"] .height-input').value = '0.000';
+}
+
+async function useDeviceLocation() {
+  if (!navigator.geolocation) {
+    showToast('Geolocatie wordt niet ondersteund door deze browser.', true);
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    (pos) => setPointFromLonLat(pos.coords.longitude, pos.coords.latitude),
+    (err) => showToast('Kon apparaatlocatie niet ophalen: ' + err.message, true),
+    { enableHighAccuracy: true, timeout: 8000 },
+  );
+}
+
+/* ---------------------------------------------------------------- */
+/* Paneel-interactie (header inklappen, mobiel bodemvenster, modals)  */
+/* ---------------------------------------------------------------- */
+
+function setHeaderCollapsed(collapsed) {
+  document.getElementById('header-panel').classList.toggle('collapsed', collapsed);
+  document.getElementById('header-tab').classList.toggle('visible', collapsed);
+}
+
+function toggleHeader() {
+  const panel = document.getElementById('header-panel');
+  setHeaderCollapsed(!panel.classList.contains('collapsed'));
+}
+
+function toggleSheet() {
+  const panel = document.getElementById('input-panel');
+  const btn = document.getElementById('sheet-toggle');
+  const expanded = !panel.classList.contains('expanded');
+  panel.classList.toggle('expanded', expanded);
+  btn.innerHTML = expanded ? '&#9660; UITKOMST' : '&#9650; UITKOMST';
+  // Op mobiel overlapt het inklapbare infopaneel anders de uitgeklapte
+  // resultaten; klap het daarom automatisch weg zodra de sheet opengaat.
+  if (expanded) setHeaderCollapsed(true);
+}
+
+function wireStaticEvents() {
+  document.getElementById('header-collapse').addEventListener('click', toggleHeader);
+  document.getElementById('header-tab').addEventListener('click', toggleHeader);
+  document.getElementById('sheet-toggle').addEventListener('click', toggleSheet);
+
+  document.getElementById('about-btn').addEventListener('click', () => {
+    document.getElementById('about-modal').classList.remove('hidden');
+  });
+  document.getElementById('debug-btn').addEventListener('click', () => {
+    document.getElementById('debug-modal').classList.remove('hidden');
+  });
+  document.querySelectorAll('.modal').forEach((modal) => {
+    modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.add('hidden'); });
+    modal.querySelectorAll('.modal-close').forEach((btn) => {
+      btn.addEventListener('click', () => modal.classList.add('hidden'));
+    });
+  });
+
+  coord1.addEventListener('blur', onCoordChange);
+  coord1.addEventListener('keydown', (e) => { if (e.key === 'Enter') onCoordChange(); });
+  coord2.addEventListener('blur', onCoordChange);
+  coord2.addEventListener('keydown', (e) => { if (e.key === 'Enter') onCoordChange(); });
+  srcSelect.addEventListener('change', onSrcSystemChange);
+  gpsBtn.addEventListener('click', useDeviceLocation);
+}
+
+/* ---------------------------------------------------------------- */
+/* Init                                                                */
+/* ---------------------------------------------------------------- */
+
+buildHeightRows();
+updateCoordLabels();
+wireStaticEvents();
+initMap();
+coord1.value = EXAMPLE_RD[0];
+coord2.value = EXAMPLE_RD[1];
+onCoordChange();
+
+</script>
+</body>
+</html>
