@@ -69,19 +69,19 @@ def self_validation():
             }
                 
             lat, lon, h = rdnap_to_etrsh(pt['rd_x'], pt['rd_y'], pt['nap'])
-            if pt['etrs_lat'] - lat >= latlon_tolerance:
+            if abs(pt['etrs_lat'] - lat) >= latlon_tolerance:
                 print(f"{pt['id']}: lat failed test")
-            if pt['etrs_lon'] - lon >= latlon_tolerance:
+            if abs(pt['etrs_lon'] - lon) >= latlon_tolerance:
                 print(f"{pt['id']}: lon failed test")
-            if pt['nap'] is not None and pt['etrs_h'] - h >= h_tolerance:
+            if pt['nap'] is not None and (h is None or abs(pt['etrs_h'] - h) >= h_tolerance):
                 print(f"{pt['id']}: height failed test")
                 
             x, y, nap = etrsh_to_rdnap(pt['etrs_lat'], pt['etrs_lon'], pt['etrs_h'])
-            if pt['rd_x'] - x >= xy_tolerance:
-                print(f"{pt['id']}: lat failed test")
-            if pt['rd_y'] - y >= xy_tolerance:
-                print(f"{pt['id']}: lon failed test")
-            if pt['nap'] is not None and pt['nap'] - nap >= h_tolerance:
+            if abs(pt['rd_x'] - x) >= xy_tolerance:
+                print(f"{pt['id']}: x failed test")
+            if abs(pt['rd_y'] - y) >= xy_tolerance:
+                print(f"{pt['id']}: y failed test")
+            if pt['nap'] is not None and (nap is None or abs(pt['nap'] - nap) >= h_tolerance):
                 print(f"{pt['id']}: height failed test")
         
 def validate_rdnap_to_etrsh():
@@ -94,7 +94,7 @@ def validate_rdnap_to_etrsh():
                 s = [v for v in s if v]
                 lat, lon, h = rdnap_to_etrsh(float(s[1]), float(s[2]), float(s[3]))
                 
-                onf.write(f'{s[0]}\t{lat}\t{lon}\t{h if h else replace_none}\n')   
+                onf.write(f'{s[0]}\t{lat}\t{lon}\t{h if h is not None else replace_none}\n')   
                 
 def validate_etrsh_to_rdnap():
 
@@ -106,6 +106,6 @@ def validate_etrsh_to_rdnap():
                 s = [v for v in s if v]
                 x, y, h = etrsh_to_rdnap(float(s[1]), float(s[2]), float(s[3]))
                 
-                onf.write(f'{s[0]}\t{x}\t{y}\t{h if h else replace_none}\n')
+                onf.write(f'{s[0]}\t{x}\t{y}\t{h if h is not None else replace_none}\n')
     
     
