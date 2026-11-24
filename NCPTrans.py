@@ -298,7 +298,7 @@ class Transformer():
         g_sw = self.get_val_at_line(i_sw, grid, 'lat_ellipsoid')
         g_se = self.get_val_at_line(i_se, grid, 'lat_ellipsoid')
         
-        if g_nw and g_ne and g_sw and g_se:
+        if None not in (g_nw, g_ne, g_sw, g_se):
             N = (phi_norm - math.floor(phi_norm)) * (g_nw * (math.floor(lmbda_norm) + 1 - lmbda_norm) + g_ne * (lmbda_norm - math.floor(lmbda_norm))) + (math.floor(phi_norm) + 1 - phi_norm) * (g_sw * (math.floor(lmbda_norm) + 1 - lmbda_norm) + g_se * (lmbda_norm - math.floor(lmbda_norm)))
             return N
         
@@ -371,9 +371,9 @@ class Transformer():
         phi_prev = phi_i + 10*threshold
         lmbda_prev = lmbda_i + 10*threshold
         
-        while abs(phi_i - phi_prev) >= threshold and abs(lmbda_i - lmbda_prev) >= threshold:
+        while (abs(phi_i - phi_prev) >= threshold or abs(lmbda_i - lmbda_prev) >= threshold) and i < 100:
             phi_prev = phi_i
-            lmbda_prev = lmbda_prev
+            lmbda_prev = lmbda_i
         
             phi_norm = (phi_i - grid['PHI_MIN']) / grid['PHI_DELTA']
             lmbda_norm = (lmbda_i - grid['LMBDA_MIN']) / grid['LMBDA_DELTA']
